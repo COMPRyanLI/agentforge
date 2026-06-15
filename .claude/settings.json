@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv:*)",
+      "Bash(uv run:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(alembic:*)",
+      "Bash(docker compose:*)",
+      "Bash(npm install)",
+      "Bash(npm run:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git add:*)",
+      "Bash(git log:*)",
+      "Bash(git restore:*)",
+      "Bash(curl http://localhost:*)",
+      "Read(./**)"
+    ],
+    "ask": [
+      "Bash(git commit:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Read(./.env)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/format.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
