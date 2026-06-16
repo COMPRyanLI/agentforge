@@ -1,0 +1,39 @@
+"""Async SQLAlchemy engine + session factory.
+
+Engine creation is lazy so the app (and the /health check) start without a live
+database — useful in Phase 0 before any models exist.
+"""
+
+from collections.abc import AsyncIterator
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.config import settings
+
+_engine: AsyncEngine | None = None
+_sessionmaker: async_sessionmaker[AsyncSession] | None = None
+
+
+def get_engine() -> AsyncEngine:
+    global _engine, _sessionmaker
+    if _engine is None:
+        _engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+        _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
+    return _engine
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency yielding an async DB session."""
+    get_engine()
+    assert _sessionmaker is not None
+    async with _sessionmaker() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise

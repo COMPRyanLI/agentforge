@@ -1,0 +1,91 @@
+# Run from repo root:  docker compose -f infra/docker-compose.yml up -d
+# Ollama runs on your Windows HOST (you already have Gemma there); the api/worker
+# reach it via host.docker.internal. To containerize Ollama instead, uncomment
+# the `ollama` service and set OLLAMA_BASE_URL=http://ollama:11434.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: agentforge
+      POSTGRES_PASSWORD: agentforge
+      POSTGRES_DB: agentforge
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ../backend
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agentforge:agentforge@postgres:5432/agentforge
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: gemma4:e4b
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ../backend:/app
+      - /app/.venv
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build: ../backend
+    command: uv run arq app.workers.WorkerSettings
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agentforge:agentforge@postgres:5432/agentforge
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: gemma4:e4b
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ../backend:/app
+      - /app/.venv
+    depends_on:
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import redis, os; redis.from_url(os.environ['REDIS_URL']).ping()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  web:
+    build: ../web
+    volumes: ["../web:/app", "/app/node_modules"]
+    ports: ["5173:5173"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:5173 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ollama:
+  #   image: ollama/ollama
+  #   ports: ["11434:11434"]
+  #   volumes: ["ollama:/root/.ollama"]
+
+volumes:
+  pgdata:
+  # ollama:

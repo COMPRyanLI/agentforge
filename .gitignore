@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+uv.lock
+
+# Env / secrets
+.env
+*.env
+!.env.example
+
+# Node
+node_modules/
+dist/
+tsconfig.tsbuildinfo
+
+# OS / editor
+.DS_Store
+.idea/
