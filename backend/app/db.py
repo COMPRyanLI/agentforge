@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.config import settings
+from app.config import get_settings
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
@@ -22,7 +22,7 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     global _engine, _sessionmaker
     if _engine is None:
-        _engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+        _engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
         _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
 
@@ -34,6 +34,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     async with _sessionmaker() as session:
         try:
             yield session
+            await session.commit()
         except Exception:
             await session.rollback()
             raise

@@ -1,28 +1,25 @@
-"""Alembic async environment.
-
-Phase 1: import your SQLAlchemy Base and set target_metadata = Base.metadata so
-`alembic revision --autogenerate` can see your models.
-"""
+"""Alembic async environment."""
 
 import asyncio
 from logging.config import fileConfig
 
+from sqlalchemy import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
-from app.config import settings
+from app.config import get_settings
+from app.models import Base  # registers all models with Base.metadata
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# In Phase 1: from app.models.base import Base; target_metadata = Base.metadata
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=get_settings().database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -31,14 +28,14 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection) -> None:  # type: ignore[no-untyped-def]
+def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()
 
 
 async def run_migrations_online() -> None:
-    engine = create_async_engine(settings.database_url)
+    engine = create_async_engine(get_settings().database_url)
     async with engine.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await engine.dispose()

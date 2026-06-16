@@ -9,6 +9,26 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run: { working-directory: backend }
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agentforge
+          POSTGRES_PASSWORD: agentforge
+          POSTGRES_DB: agentforge_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://agentforge:agentforge@localhost:5432/agentforge_test
+      SECRET_KEY: ci-test-secret-not-for-production
+
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
