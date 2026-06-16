@@ -17,6 +17,8 @@ dependencies = [
     "ollama>=0.4",
     "pwdlib[bcrypt]>=0.2",
     "pyjwt>=2.9",
+    "langgraph>=1.2.5",
+    "jsonschema>=4.26.0",
 ]
 
 [dependency-groups]
@@ -26,6 +28,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "testcontainers[postgresql]>=4.8",
+    "types-jsonschema>=4.26.0.20260518",
 ]
 
 [tool.uv]
