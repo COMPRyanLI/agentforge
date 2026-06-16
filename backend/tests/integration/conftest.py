@@ -8,6 +8,9 @@ per-test transaction that rolls back after each test.
 import os
 from collections.abc import AsyncIterator, Iterator
 
+# Ryuk (testcontainers reaper) cannot reliably bind its port on Windows Docker Desktop.
+os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
