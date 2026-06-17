@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.run import Run
+from app.models.run import Run, RunEvent
 
 
 class RunRepo:
@@ -60,3 +60,48 @@ class RunRepo:
         await session.flush()
         await session.refresh(run)
         return run
+
+    async def create_event(
+        self,
+        session: AsyncSession,
+        run_id: uuid.UUID,
+        step_index: int,
+        node_id: str,
+        event_type: str,
+        payload_json: dict[str, Any],  # justified: event payload is open-ended
+        ts: datetime,
+    ) -> RunEvent:
+        event = RunEvent(
+            run_id=run_id,
+            step_index=step_index,
+            node_id=node_id,
+            event_type=event_type,
+            payload_json=payload_json,
+            ts=ts,
+        )
+        session.add(event)
+        await session.flush()
+        return event
+
+    async def list_events(
+        self,
+        session: AsyncSession,
+        run_id: uuid.UUID,
+        after_step: int = -1,
+    ) -> list[RunEvent]:
+        result = await session.execute(
+            select(RunEvent)
+            .where(RunEvent.run_id == run_id, RunEvent.step_index > after_step)
+            .order_by(RunEvent.step_index.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_by_agent(
+        self,
+        session: AsyncSession,
+        agent_id: uuid.UUID,
+    ) -> list[Run]:
+        result = await session.execute(
+            select(Run).where(Run.agent_id == agent_id).order_by(Run.created_at.desc())
+        )
+        return list(result.scalars().all())

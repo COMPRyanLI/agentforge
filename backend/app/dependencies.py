@@ -1,10 +1,14 @@
 """FastAPI dependency providers for auth, settings, and infrastructure."""
 
 import uuid
+from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from arq import create_pool
+from arq.connections import ArqRedis, RedisSettings
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -52,3 +56,47 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
+
+
+async def get_optional_current_user(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> "User | None":
+    """Like get_current_user but returns None instead of raising when credentials are absent.
+
+    Used by the SSE endpoint which also accepts a ?token= query param (EventSource can't
+    send custom headers).
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token_str = auth_header[7:]
+    try:
+        subject = decode_access_token(token_str, settings)
+        user_id = uuid.UUID(subject)
+    except (HTTPException, ValueError):
+        return None
+    return await _user_repo.get_by_id(session, user_id)
+
+
+async def get_arq_pool(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AsyncIterator[ArqRedis]:
+    """Yield an arq Redis pool for job enqueueing; closed after the request."""
+    pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    try:
+        yield pool
+    finally:
+        await pool.aclose()
+
+
+async def get_redis(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AsyncIterator[Redis]:
+    """Yield a redis.asyncio client for pub/sub (SSE endpoint); closed after request."""
+    client: Redis = Redis.from_url(settings.redis_url)
+    try:
+        yield client
+    finally:
+        await client.aclose()

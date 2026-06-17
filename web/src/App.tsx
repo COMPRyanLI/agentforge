@@ -8,6 +8,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { LLMNode } from "./nodes/LLMNode";
+import { RunPanel } from "./components/RunPanel";
 
 const nodeTypes: NodeTypes = { llm: LLMNode };
 
@@ -19,15 +20,19 @@ const initialEdges: Edge[] = [];
 export default function App() {
   return (
     <div style={{ width: "100vw", height: "100vh", background: "#0b1020" }}>
-      <ReactFlow
-        nodes={initialNodes}
-        edges={initialEdges}
-        nodeTypes={nodeTypes}
-        fitView
-      >
-        <Background />
-        <Controls />
-      </ReactFlow>
+      {/* Canvas takes full viewport minus the run panel width */}
+      <div style={{ position: "absolute", inset: 0, right: 380 }}>
+        <ReactFlow
+          nodes={initialNodes}
+          edges={initialEdges}
+          nodeTypes={nodeTypes}
+          fitView
+        >
+          <Background />
+          <Controls />
+        </ReactFlow>
+      </div>
+      <RunPanel />
     </div>
   );
 }

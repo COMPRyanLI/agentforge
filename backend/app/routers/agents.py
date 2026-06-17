@@ -1,14 +1,14 @@
-"""Agents router — CRUD, versioning, publish, and synchronous run."""
+"""Agents router — CRUD, versioning, publish, and async run."""
 
 import uuid
 from typing import Annotated
 
+from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.dependencies import get_current_user, get_llm_provider
-from app.llm.provider import LLMProvider
+from app.dependencies import get_arq_pool, get_current_user
 from app.models.user import User
 from app.schemas.agent import (
     AgentCreate,
@@ -17,7 +17,7 @@ from app.schemas.agent import (
     AgentVersionCreate,
     AgentVersionRead,
 )
-from app.schemas.run import RunCreate, RunRead
+from app.schemas.run import RunCreate, RunEnqueueResponse, RunRead
 from app.services import agent as agent_service
 from app.services import run as run_service
 
@@ -89,12 +89,27 @@ async def publish_agent(
     return AgentRead.model_validate(agent)
 
 
-@router.post("/{agent_id}/run", response_model=RunRead, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{agent_id}/run",
+    response_model=RunEnqueueResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def run_agent(
     agent_id: uuid.UUID,
     data: RunCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
-    llm: Annotated[LLMProvider, Depends(get_llm_provider)],
-) -> RunRead:
-    return await run_service.create_and_execute(session, agent_id, current_user.id, data, llm)
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+) -> RunEnqueueResponse:
+    response = await run_service.create_pending(session, agent_id, current_user.id, data)
+    await arq_pool.enqueue_job("execute_run", str(response.run_id))
+    return response
+
+
+@router.get("/{agent_id}/runs", response_model=list[RunRead])
+async def list_agent_runs(
+    agent_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[RunRead]:
+    return await run_service.list_by_agent(session, agent_id, current_user.id)

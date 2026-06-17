@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 
     app_name: str = "AgentForge"
 
+    # CORS — origins allowed to call the API from a browser (e.g. the Vite dev server)
+    cors_origins: list[str] = ["http://localhost:5173"]
+
     # JWT — SECRET_KEY has no default so pydantic raises at startup if unset
     secret_key: str
     jwt_algorithm: str = "HS256"

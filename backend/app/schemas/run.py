@@ -27,3 +27,20 @@ class RunRead(BaseModel):
     ended_at: datetime | None
     error_json: dict[str, Any] | None
     created_at: datetime
+
+
+class RunEnqueueResponse(BaseModel):
+    run_id: uuid.UUID
+    status: str = "pending"
+
+
+class RunEventRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    step_index: int
+    node_id: str
+    event_type: str
+    payload_json: dict[str, Any]  # justified: event payload is open-ended
+    ts: datetime

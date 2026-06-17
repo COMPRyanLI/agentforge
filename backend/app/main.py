@@ -1,12 +1,23 @@
 """FastAPI application entrypoint."""
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.routers import agents, auth, health, runs, tools
 from app.schemas.health import RootResponse
 
-app = FastAPI(title=get_settings().app_name)
+settings = get_settings()
+
+app = FastAPI(title=settings.app_name)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
+)
 
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth")

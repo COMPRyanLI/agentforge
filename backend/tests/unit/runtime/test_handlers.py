@@ -278,3 +278,107 @@ async def test_tool_handler_increments_step_index() -> None:
     )
     update = await handler(state)
     assert update["step_index"] == 4
+
+
+# ---------------------------------------------------------------------------
+# EventEmitter integration — existing tests must pass with event_emitter=None
+# ---------------------------------------------------------------------------
+
+
+async def test_input_handler_without_emitter_unchanged() -> None:
+    handler = make_input_handler(node_id="in")
+    update = await handler(make_state())
+    assert update == {}
+
+
+async def test_llm_handler_emits_node_start_and_end() -> None:
+    from unittest.mock import AsyncMock as _AM
+
+    mock_llm: LLMProvider = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = LLMResponse(content="ok", tool_calls=[])  # type: ignore[attr-defined]
+
+    emitter = _AM()
+    handler = make_llm_handler(
+        llm=mock_llm,
+        registry=make_registry(),
+        tool_names=[],
+        system_prompt="Be helpful.",
+        node_id="llm1",
+        event_emitter=emitter,
+    )
+    await handler(make_state())
+
+    called_types = [c.kwargs["event_type"] for c in emitter.emit.call_args_list]
+    assert "node_start" in called_types
+    assert "node_end" in called_types
+
+
+async def test_llm_handler_emits_tool_call_and_result_events() -> None:
+    from unittest.mock import AsyncMock as _AM
+
+    mock_llm: LLMProvider = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.side_effect = [  # type: ignore[attr-defined]
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCall(name="calculator", arguments={"expression": "1+1"})],
+        ),
+        LLMResponse(content="2", tool_calls=[]),
+    ]
+
+    emitter = _AM()
+    handler = make_llm_handler(
+        llm=mock_llm,
+        registry=make_registry(),
+        tool_names=["calculator"],
+        system_prompt="",
+        node_id="llm1",
+        event_emitter=emitter,
+    )
+    await handler(make_state())
+
+    called_types = [c.kwargs["event_type"] for c in emitter.emit.call_args_list]
+    assert "tool_call" in called_types
+    assert "tool_result" in called_types
+
+
+async def test_tool_handler_emits_events_when_emitter_provided() -> None:
+    from unittest.mock import AsyncMock as _AM
+
+    emitter = _AM()
+    handler = make_tool_handler(
+        make_registry(),
+        "calculator",
+        node_id="t1",
+        event_emitter=emitter,
+    )
+    state = make_state(
+        messages=[
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"function": {"name": "calculator", "arguments": {"expression": "2+2"}}}
+                ],
+            }
+        ]
+    )
+    await handler(state)
+
+    called_types = [c.kwargs["event_type"] for c in emitter.emit.call_args_list]
+    assert "node_start" in called_types
+    assert "tool_call" in called_types
+    assert "tool_result" in called_types
+    assert "node_end" in called_types
+
+
+async def test_output_handler_emits_events_when_emitter_provided() -> None:
+    from unittest.mock import AsyncMock as _AM
+
+    emitter = _AM()
+    handler = make_output_handler(node_id="out", event_emitter=emitter)
+    state = make_state(messages=[{"role": "assistant", "content": "done"}])
+    await handler(state)
+
+    called_types = [c.kwargs["event_type"] for c in emitter.emit.call_args_list]
+    assert "node_start" in called_types
+    assert "node_end" in called_types

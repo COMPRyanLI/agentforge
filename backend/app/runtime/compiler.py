@@ -7,7 +7,7 @@ Tool reference rules (two node types, two formats):
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -24,6 +24,9 @@ from app.runtime.handlers import (
 from app.runtime.registry import ToolRegistry
 from app.runtime.state import RunState
 
+if TYPE_CHECKING:
+    from app.runtime.event_emitter import EventEmitter
+
 
 class GraphCompiler:
     """Compiles a graph_json dict into a LangGraph CompiledStateGraph."""
@@ -33,11 +36,13 @@ class GraphCompiler:
         llm: LLMProvider,
         registry: ToolRegistry,
         tool_id_to_name: dict[str, str] | None = None,
+        event_emitter: EventEmitter | None = None,
     ) -> None:
         self._llm = llm
         self._registry = registry
         # Maps str(tool_uuid) → tool.name for standalone tool nodes
         self._tool_id_to_name: dict[str, str] = tool_id_to_name or {}
+        self._event_emitter = event_emitter
 
     def compile(
         self, graph_json: dict[str, Any]
@@ -79,23 +84,29 @@ class GraphCompiler:
 
     def _make_handler(self, node: dict[str, Any]) -> NodeHandler:
         node_type: str = node.get("type", "")
+        node_id: str = node.get("id", node_type)
         data: dict[str, Any] = node.get("data") or {}
+        emitter = self._event_emitter
 
         match node_type:
             case "input":
-                return make_input_handler()
+                return make_input_handler(node_id=node_id, event_emitter=emitter)
             case "llm":
                 return make_llm_handler(
                     llm=self._llm,
                     registry=self._registry,
                     tool_names=list(data.get("tools") or []),
                     system_prompt=str(data.get("system_prompt") or "You are a helpful assistant."),
+                    node_id=node_id,
+                    event_emitter=emitter,
                 )
             case "tool":
                 tool_id: str = str(data.get("tool_id") or "")
                 tool_name = self._tool_id_to_name.get(tool_id, tool_id)
-                return make_tool_handler(self._registry, tool_name)
+                return make_tool_handler(
+                    self._registry, tool_name, node_id=node_id, event_emitter=emitter
+                )
             case "output":
-                return make_output_handler()
+                return make_output_handler(node_id=node_id, event_emitter=emitter)
             case _:
                 raise GraphCompilationError(f"Unknown node type: {node_type!r}")

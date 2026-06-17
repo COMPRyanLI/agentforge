@@ -1,24 +1,22 @@
 """Integration tests for POST /agents/{id}/run and GET /runs/{id}.
 
-All tests use a stubbed LLMProvider — no live Ollama required in CI.
-The mock LLM has scripted responses so tests are fully deterministic.
+Phase 3: /run now returns 202 + run_id (async enqueue). The arq pool is mocked
+so no real Redis is required. Actual graph execution is tested via the worker task
+tests (test_execute_run.py).
 """
 
 from __future__ import annotations
 
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from httpx import AsyncClient
 
-from app.db import get_session
-from app.dependencies import get_llm_provider
-from app.llm.provider import LLMProvider, LLMResponse, ToolCall
+from app.dependencies import get_arq_pool
 from app.main import app
-from app.models.run import Run
+from app.repositories.run import RunRepo
 
 # ---------------------------------------------------------------------------
 # Helpers to build graphs
@@ -37,24 +35,6 @@ SIMPLE_GRAPH: dict[str, Any] = {
 }
 
 
-def calc_graph(tool_names: list[str]) -> dict[str, Any]:
-    return {
-        "nodes": [
-            {"id": "in", "type": "input"},
-            {
-                "id": "llm1",
-                "type": "llm",
-                "data": {"system_prompt": "Use tools.", "tools": tool_names},
-            },
-            {"id": "out", "type": "output"},
-        ],
-        "edges": [
-            {"source": "in", "target": "llm1"},
-            {"source": "llm1", "target": "out"},
-        ],
-    }
-
-
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
@@ -67,33 +47,21 @@ async def register_and_login(client: AsyncClient, email: str, password: str = "p
 
 
 # ---------------------------------------------------------------------------
-# LLM mock helpers
+# arq pool mock
 # ---------------------------------------------------------------------------
 
 
-def plain_text_llm(reply: str) -> LLMProvider:
-    m: LLMProvider = AsyncMock(spec=LLMProvider)
-    m.chat.return_value = LLMResponse(content=reply, tool_calls=[])  # type: ignore[attr-defined]
-    return m
+def _mock_arq_pool() -> AsyncMock:
+    pool = AsyncMock()
+    pool.enqueue_job = AsyncMock(return_value=MagicMock())
+    return pool
 
 
-def tool_calling_llm(tool_name: str, expression: str, final_reply: str) -> LLMProvider:
-    """First call returns a tool_call, second returns the answer."""
-    m: LLMProvider = AsyncMock(spec=LLMProvider)
-    m.chat.side_effect = [  # type: ignore[attr-defined]
-        LLMResponse(
-            content=None,
-            tool_calls=[ToolCall(name=tool_name, arguments={"expression": expression})],
-        ),
-        LLMResponse(content=final_reply, tool_calls=[]),
-    ]
-    return m
+def _override_arq(pool: AsyncMock) -> None:
+    async def _dep() -> AsyncMock:
+        yield pool
 
-
-def error_llm() -> LLMProvider:
-    m: LLMProvider = AsyncMock(spec=LLMProvider)
-    m.chat.side_effect = RuntimeError("Ollama connection refused")  # type: ignore[attr-defined]
-    return m
+    app.dependency_overrides[get_arq_pool] = _dep
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +71,6 @@ def error_llm() -> LLMProvider:
 
 @pytest.fixture
 async def auth_headers(client: AsyncClient) -> dict[str, str]:
-    # Unique email per invocation: the run service commits before execute_graph,
-    # so registered users persist in the DB beyond the test's rollback.
     email = f"run_user_{uuid.uuid4().hex[:8]}@example.com"
     token = await register_and_login(client, email)
     return {"Authorization": f"Bearer {token}"}
@@ -119,7 +85,6 @@ async def other_headers(client: AsyncClient) -> dict[str, str]:
 
 @pytest.fixture
 async def agent_id(client: AsyncClient, auth_headers: dict[str, str]) -> str:
-    """Create an agent with a simple graph version, return its id."""
     create = await client.post("/agents", json={"name": "Test Runner"}, headers=auth_headers)
     aid = create.json()["id"]
     await client.post(
@@ -130,68 +95,81 @@ async def agent_id(client: AsyncClient, auth_headers: dict[str, str]) -> str:
     return str(aid)
 
 
-@pytest.fixture
-async def calc_agent_id(client: AsyncClient, auth_headers: dict[str, str]) -> str:
-    """Create an agent whose LLM node references the 'calculator' builtin."""
-    create = await client.post("/agents", json={"name": "Calc Agent"}, headers=auth_headers)
-    aid = create.json()["id"]
-    await client.post(
-        f"/agents/{aid}/versions",
-        json={"graph_json": calc_graph(["calculator"])},
-        headers=auth_headers,
+# ---------------------------------------------------------------------------
+# Helpers to insert run rows directly (bypassing the async worker)
+# ---------------------------------------------------------------------------
+
+
+async def _insert_succeeded_run(
+    db_session: Any, agent_id_str: str, agent_version_id_str: str
+) -> str:
+    """Insert a completed run row so GET /runs/{id} tests don't need the worker."""
+    repo = RunRepo()
+    run = await repo.create(
+        db_session,
+        agent_id=uuid.UUID(agent_id_str),
+        agent_version_id=uuid.UUID(agent_version_id_str),
+        thread_id=str(uuid.uuid4()),
+        input_json={"input": "hi"},
     )
-    return str(aid)
+    await repo.update_status(
+        db_session,
+        run,
+        "succeeded",
+        output_json={"output": "hello"},
+    )
+    await db_session.commit()
+    return str(run.id)
 
 
 # ---------------------------------------------------------------------------
-# Tests: basic run lifecycle
+# Tests: 202 enqueue path
 # ---------------------------------------------------------------------------
 
 
-async def test_run_agent_succeeds(
+async def test_run_agent_returns_202_and_pending(
     client: AsyncClient, auth_headers: dict[str, str], agent_id: str
 ) -> None:
-    mock = plain_text_llm("42 is the answer.")
-    app.dependency_overrides[get_llm_provider] = lambda: mock
+    pool = _mock_arq_pool()
+    _override_arq(pool)
     try:
         resp = await client.post(
             f"/agents/{agent_id}/run",
-            json={"input": "what is the answer to life?"},
+            json={"input": "what is the answer?"},
             headers=auth_headers,
         )
     finally:
-        app.dependency_overrides.pop(get_llm_provider, None)
+        app.dependency_overrides.pop(get_arq_pool, None)
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 202, resp.text
     data = resp.json()
-    assert data["status"] == "succeeded"
-    assert data["output_json"]["output"] == "42 is the answer."
-    assert data["error_json"] is None
+    assert "run_id" in data
+    assert data["status"] == "pending"
+    # run_id must be a valid UUID
+    uuid.UUID(data["run_id"])
 
 
-async def test_get_run_returns_correct_data(
+async def test_run_agent_enqueues_execute_run_job(
     client: AsyncClient, auth_headers: dict[str, str], agent_id: str
 ) -> None:
-    mock = plain_text_llm("hello")
-    app.dependency_overrides[get_llm_provider] = lambda: mock
+    pool = _mock_arq_pool()
+    _override_arq(pool)
     try:
-        run_resp = await client.post(
+        resp = await client.post(
             f"/agents/{agent_id}/run",
-            json={"input": "hi"},
+            json={"input": "hello"},
             headers=auth_headers,
         )
     finally:
-        app.dependency_overrides.pop(get_llm_provider, None)
+        app.dependency_overrides.pop(get_arq_pool, None)
 
-    run_id = run_resp.json()["id"]
-    get_resp = await client.get(f"/runs/{run_id}", headers=auth_headers)
-    assert get_resp.status_code == 200
-    assert get_resp.json()["id"] == run_id
-    assert get_resp.json()["status"] == "succeeded"
+    assert resp.status_code == 202, resp.text
+    run_id = resp.json()["run_id"]
+    pool.enqueue_job.assert_called_once_with("execute_run", run_id)
 
 
 # ---------------------------------------------------------------------------
-# Tests: error conditions
+# Tests: validation errors (must still fire before enqueue)
 # ---------------------------------------------------------------------------
 
 
@@ -200,9 +178,8 @@ async def test_run_agent_no_version_returns_400(
 ) -> None:
     create = await client.post("/agents", json={"name": "No Version"}, headers=auth_headers)
     aid = create.json()["id"]
-
-    mock = plain_text_llm("should not be called")
-    app.dependency_overrides[get_llm_provider] = lambda: mock
+    pool = _mock_arq_pool()
+    _override_arq(pool)
     try:
         resp = await client.post(
             f"/agents/{aid}/run",
@@ -210,16 +187,17 @@ async def test_run_agent_no_version_returns_400(
             headers=auth_headers,
         )
     finally:
-        app.dependency_overrides.pop(get_llm_provider, None)
+        app.dependency_overrides.pop(get_arq_pool, None)
 
     assert resp.status_code == 400
+    pool.enqueue_job.assert_not_called()
 
 
 async def test_run_nonexistent_agent_returns_404(
     client: AsyncClient, auth_headers: dict[str, str]
 ) -> None:
-    mock = plain_text_llm("no")
-    app.dependency_overrides[get_llm_provider] = lambda: mock
+    pool = _mock_arq_pool()
+    _override_arq(pool)
     try:
         resp = await client.post(
             "/agents/00000000-0000-0000-0000-000000000099/run",
@@ -227,9 +205,10 @@ async def test_run_nonexistent_agent_returns_404(
             headers=auth_headers,
         )
     finally:
-        app.dependency_overrides.pop(get_llm_provider, None)
+        app.dependency_overrides.pop(get_arq_pool, None)
 
     assert resp.status_code == 404
+    pool.enqueue_job.assert_not_called()
 
 
 async def test_run_other_users_agent_returns_403(
@@ -238,8 +217,8 @@ async def test_run_other_users_agent_returns_403(
     other_headers: dict[str, str],
     agent_id: str,
 ) -> None:
-    mock = plain_text_llm("should not run")
-    app.dependency_overrides[get_llm_provider] = lambda: mock
+    pool = _mock_arq_pool()
+    _override_arq(pool)
     try:
         resp = await client.post(
             f"/agents/{agent_id}/run",
@@ -247,100 +226,90 @@ async def test_run_other_users_agent_returns_403(
             headers=other_headers,
         )
     finally:
-        app.dependency_overrides.pop(get_llm_provider, None)
+        app.dependency_overrides.pop(get_arq_pool, None)
 
     assert resp.status_code == 403
+    pool.enqueue_job.assert_not_called()
 
 
-async def test_llm_error_persists_failed_run(
-    db_session: Any, auth_headers: dict[str, str], agent_id: str
+# ---------------------------------------------------------------------------
+# Tests: GET /runs/{id}
+# ---------------------------------------------------------------------------
+
+
+async def test_get_run_returns_correct_data(
+    client: AsyncClient,
+    db_session: Any,
+    auth_headers: dict[str, str],
+    agent_id: str,
 ) -> None:
-    """Unexpected LLM errors should return 500 (re-raise path in RunService).
+    # Get the version ID for the agent so we can insert a run directly
+    agent_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    version_id = agent_resp.json()["current_version_id"]
 
-    The httpx ASGI transport re-raises server exceptions by default, hiding the
-    5xx response. We use raise_app_exceptions=False so we can assert the status.
-    """
-    mock = error_llm()
-    app.dependency_overrides[get_llm_provider] = lambda: mock
+    run_id = await _insert_succeeded_run(db_session, agent_id, version_id)
 
-    async def _session() -> Any:
-        yield db_session
-
-    app.dependency_overrides[get_session] = _session
-    try:
-        transport = ASGITransport(app=app, raise_app_exceptions=False)
-        async with AsyncClient(transport=transport, base_url="http://test") as no_raise_client:
-            resp = await no_raise_client.post(
-                f"/agents/{agent_id}/run",
-                json={"input": "break things"},
-                headers=auth_headers,
-            )
-    finally:
-        app.dependency_overrides.pop(get_llm_provider, None)
-        app.dependency_overrides.pop(get_session, None)
-
-    assert resp.status_code == 500
-
-    # The run record must have been committed as "failed" before the re-raise,
-    # so it survives the session rollback that get_session performs on exception.
-    result = await db_session.execute(select(Run).where(Run.agent_id == uuid.UUID(agent_id)))
-    failed_run = result.scalar_one_or_none()
-    assert failed_run is not None
-    assert failed_run.status == "failed"
-    assert failed_run.error_json is not None
+    get_resp = await client.get(f"/runs/{run_id}", headers=auth_headers)
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["id"] == run_id
+    assert data["status"] == "succeeded"
+    assert data["output_json"]["output"] == "hello"
 
 
 async def test_get_run_other_user_returns_403(
     client: AsyncClient,
+    db_session: Any,
     auth_headers: dict[str, str],
     other_headers: dict[str, str],
     agent_id: str,
 ) -> None:
-    mock = plain_text_llm("hi")
-    app.dependency_overrides[get_llm_provider] = lambda: mock
-    try:
-        run_resp = await client.post(
-            f"/agents/{agent_id}/run", json={"input": "hi"}, headers=auth_headers
-        )
-    finally:
-        app.dependency_overrides.pop(get_llm_provider, None)
+    agent_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    version_id = agent_resp.json()["current_version_id"]
+    run_id = await _insert_succeeded_run(db_session, agent_id, version_id)
 
-    run_id = run_resp.json()["id"]
     resp = await client.get(f"/runs/{run_id}", headers=other_headers)
     assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------
-# Core demo: deterministic tool-calling scenario
+# Tests: GET /agents/{id}/runs
 # ---------------------------------------------------------------------------
 
 
-async def test_tool_calling_calculator_end_to_end(
+async def test_list_runs_by_agent_returns_all_runs(
+    client: AsyncClient,
+    db_session: Any,
+    auth_headers: dict[str, str],
+    agent_id: str,
+) -> None:
+    agent_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    version_id = agent_resp.json()["current_version_id"]
+    await _insert_succeeded_run(db_session, agent_id, version_id)
+    await _insert_succeeded_run(db_session, agent_id, version_id)
+
+    resp = await client.get(f"/agents/{agent_id}/runs", headers=auth_headers)
+    assert resp.status_code == 200
+    runs = resp.json()
+    assert len(runs) == 2
+    assert all(r["agent_id"] == agent_id for r in runs)
+
+
+async def test_list_runs_by_agent_empty_list(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    create = await client.post("/agents", json={"name": "Fresh"}, headers=auth_headers)
+    aid = create.json()["id"]
+    resp = await client.get(f"/agents/{aid}/runs", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_list_runs_other_user_returns_403(
     client: AsyncClient,
     auth_headers: dict[str, str],
-    calc_agent_id: str,
+    other_headers: dict[str, str],
+    agent_id: str,
 ) -> None:
-    """The headline Phase 2 demo: POST a question → LLM calls calculator → answer returned.
-
-    Uses a scripted mock LLM so no Ollama is needed in CI.
-    The mock:
-      - Call 1: returns tool_call for calculator with expression "6*7"
-      - Call 2: returns "6 times 7 is 42."
-    Asserts: status==succeeded, output contains "42", LLM called exactly twice.
-    """
-    mock = tool_calling_llm("calculator", "6*7", "6 times 7 is 42.")
-    app.dependency_overrides[get_llm_provider] = lambda: mock
-    try:
-        resp = await client.post(
-            f"/agents/{calc_agent_id}/run",
-            json={"input": "what is 6 times 7?"},
-            headers=auth_headers,
-        )
-    finally:
-        app.dependency_overrides.pop(get_llm_provider, None)
-
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["status"] == "succeeded"
-    assert "42" in data["output_json"]["output"]
-    assert mock.chat.call_count == 2  # type: ignore[attr-defined]
+    resp = await client.get(f"/agents/{agent_id}/runs", headers=other_headers)
+    assert resp.status_code == 403
