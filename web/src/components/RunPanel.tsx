@@ -20,9 +20,14 @@ interface LogEntry {
   ts: string;
 }
 
-export function RunPanel() {
-  const [token, setToken] = useState("");
-  const [agentId, setAgentId] = useState("");
+interface RunPanelProps {
+  token: string;
+  agentId: string;
+  /** Non-null reason disables Run — e.g. "Save the graph before testing." */
+  disabledReason: string | null;
+}
+
+export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
   const [input, setInput] = useState("");
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [output, setOutput] = useState<string | null>(null);
@@ -37,7 +42,7 @@ export function RunPanel() {
   }, []);
 
   const handleRun = useCallback(async () => {
-    if (!agentId || !input || !token) return;
+    if (!agentId || !input || !token || disabledReason) return;
     setLogs([]);
     setOutput(null);
     setRunStatus("pending");
@@ -81,7 +86,7 @@ export function RunPanel() {
       setRunStatus("failed");
       setRunning(false);
     }
-  }, [agentId, input, token, appendLog]);
+  }, [agentId, input, token, disabledReason, appendLog]);
 
   const handleStop = useCallback(() => {
     stopRef.current?.();
@@ -98,11 +103,9 @@ export function RunPanel() {
   return (
     <div
       style={{
-        position: "fixed",
-        right: 0,
-        top: 0,
         width: 380,
-        height: "100vh",
+        height: "100%",
+        flexShrink: 0,
         background: "#0f172a",
         borderLeft: "1px solid #1e293b",
         display: "flex",
@@ -110,12 +113,11 @@ export function RunPanel() {
         fontFamily: "monospace",
         fontSize: 13,
         color: "#e2e8f0",
-        zIndex: 10,
       }}
     >
       {/* Header */}
       <div style={{ padding: "12px 16px", borderBottom: "1px solid #1e293b", fontWeight: 700 }}>
-        AgentForge Run Panel
+        AgentForge Test Panel
         {runStatus && (
           <span
             style={{
@@ -130,31 +132,10 @@ export function RunPanel() {
         )}
       </div>
 
-      {/* Config inputs */}
       <div style={{ padding: "8px 12px", borderBottom: "1px solid #1e293b" }}>
-        {[
-          { label: "Token", value: token, set: setToken, type: "password" },
-          { label: "Agent ID", value: agentId, set: setAgentId, type: "text" },
-        ].map(({ label, value, set, type }) => (
-          <div key={label} style={{ marginBottom: 6 }}>
-            <div style={{ color: "#64748b", fontSize: 11, marginBottom: 2 }}>{label}</div>
-            <input
-              type={type}
-              value={value}
-              onChange={(e) => set(e.target.value)}
-              style={{
-                width: "100%",
-                background: "#1e293b",
-                border: "1px solid #334155",
-                borderRadius: 4,
-                padding: "4px 8px",
-                color: "#e2e8f0",
-                fontSize: 12,
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-        ))}
+        {disabledReason && (
+          <div style={{ color: "#f59e0b", fontSize: 11, marginBottom: 6 }}>{disabledReason}</div>
+        )}
         <textarea
           placeholder="Input message…"
           value={input}
@@ -175,7 +156,7 @@ export function RunPanel() {
         <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
           <button
             onClick={handleRun}
-            disabled={running || !agentId || !input || !token}
+            disabled={running || !agentId || !input || !token || Boolean(disabledReason)}
             style={{
               flex: 1,
               background: running ? "#1e293b" : "#3b82f6",
@@ -187,7 +168,7 @@ export function RunPanel() {
               fontWeight: 700,
             }}
           >
-            {running ? "Running…" : "▶ Run"}
+            {running ? "Running…" : "▶ Test"}
           </button>
           {running && (
             <button
@@ -211,7 +192,7 @@ export function RunPanel() {
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
         {logs.length === 0 && !output && (
           <div style={{ color: "#475569", fontSize: 12, paddingTop: 8 }}>
-            Logs will stream here when you click Run.
+            Logs will stream here when you click Test.
           </div>
         )}
         {logs.map((entry, i) => (
