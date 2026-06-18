@@ -7,18 +7,26 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
+from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.dependencies import get_current_user, get_optional_current_user, get_redis
+from app.dependencies import (
+    get_arq_pool,
+    get_checkpointer,
+    get_current_user,
+    get_optional_current_user,
+    get_redis,
+)
 from app.models.user import User
 from app.repositories.agent import AgentRepo
 from app.repositories.run import RunRepo
-from app.schemas.run import RunRead
+from app.schemas.run import RunEnqueueResponse, RunRead, RunResumeRequest
 from app.security import decode_access_token
 from app.services import run as run_service
 
@@ -37,6 +45,51 @@ async def get_run(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> RunRead:
     return await run_service.get_or_404(session, run_id, owner_id=current_user.id)
+
+
+@router.post("/{run_id}/resume", response_model=RunEnqueueResponse)
+async def resume_run(
+    run_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    body: RunResumeRequest | None = None,
+) -> RunEnqueueResponse:
+    """Resume a crashed/interrupted run from its last checkpoint.
+
+    Re-invokes the worker with resume=True, so LangGraph continues from the
+    last checkpoint on the run's thread_id instead of starting fresh — no
+    already-completed LLM call or tool side effect is repeated.
+
+    If the run is paused on a require_approval tool node, body.approval
+    carries the human's decision back in via Command(resume=...).
+    """
+    approval = body.approval if body is not None else None
+    response = await run_service.resume(session, run_id, current_user.id, approval)
+    await arq_pool.enqueue_job(
+        "execute_run", str(response.run_id), resume=True, resume_value=approval
+    )
+    return response
+
+
+@router.post("/{run_id}/replay", response_model=RunEnqueueResponse)
+async def replay_run(
+    run_id: uuid.UUID,
+    from_step: Annotated[int, Query(ge=0)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    checkpointer: Annotated[AsyncPostgresSaver, Depends(get_checkpointer)],
+) -> RunEnqueueResponse:
+    """Fork a new run from an existing run's checkpoint at from_step.
+
+    The new run is enqueued with resume=True: its only seed state is the
+    forked checkpoint, so execute_graph continues forward from it rather
+    than starting from fresh input.
+    """
+    response = await run_service.replay(session, run_id, current_user.id, from_step, checkpointer)
+    await arq_pool.enqueue_job("execute_run", str(response.run_id), resume=True)
+    return response
 
 
 @router.get("/{run_id}/events")

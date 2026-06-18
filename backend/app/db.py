@@ -27,6 +27,15 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+async def close_engine() -> None:
+    """Dispose the process-wide engine, if one was created."""
+    global _engine, _sessionmaker
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _sessionmaker = None
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency yielding an async DB session."""
     get_engine()

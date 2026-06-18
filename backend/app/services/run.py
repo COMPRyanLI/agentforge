@@ -5,16 +5,19 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.db import get_engine
 from app.llm.provider import LLMProvider
 from app.repositories.agent import AgentRepo
 from app.repositories.run import RunRepo
 from app.repositories.tool import ToolRepo
 from app.runtime.builtins import register_builtins
+from app.runtime.checkpointer import fork_thread_at_step
 from app.runtime.compiler import GraphCompiler
 from app.runtime.errors import AgentRuntimeError
 from app.runtime.executor import execute_graph
@@ -115,6 +118,7 @@ async def create_and_execute(
     owner_id: uuid.UUID,
     data: RunCreate,
     llm: LLMProvider,
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
 ) -> RunRead:
     """Create a Run record, execute the graph synchronously, persist result.
 
@@ -128,7 +132,14 @@ async def create_and_execute(
     registry = ToolRegistry()
     register_builtins(registry)
 
-    compiler = GraphCompiler(llm, registry, tool_id_to_name=tool_id_to_name)
+    session_factory = async_sessionmaker(get_engine(), expire_on_commit=False)
+    compiler = GraphCompiler(
+        llm,
+        registry,
+        session_factory,
+        tool_id_to_name=tool_id_to_name,
+        checkpointer=checkpointer,
+    )
     compiled = compiler.compile(graph_json)
 
     thread_id = str(uuid.uuid4())
@@ -144,20 +155,29 @@ async def create_and_execute(
     await session.commit()
 
     try:
-        output = await execute_graph(
+        result = await execute_graph(
             compiled,
             run_id=str(run.id),
             thread_id=thread_id,
             user_input=data.input,
         )
         ended_at = datetime.now(UTC)
-        run = await _run_repo.update_status(
-            session,
-            run,
-            "succeeded",
-            output_json={"output": output},
-            ended_at=ended_at,
-        )
+        if result.awaiting_approval is not None:
+            run = await _run_repo.update_status(
+                session,
+                run,
+                "interrupted",
+                awaiting_approval=True,
+                ended_at=ended_at,
+            )
+        else:
+            run = await _run_repo.update_status(
+                session,
+                run,
+                "succeeded",
+                output_json={"output": result.output},
+                ended_at=ended_at,
+            )
     except TimeoutError as exc:
         ended_at = datetime.now(UTC)
         run = await _run_repo.update_status(
@@ -195,6 +215,105 @@ async def create_and_execute(
         raise
 
     return RunRead.model_validate(run)
+
+
+_RESUMABLE_STATUSES = {"running", "interrupted"}
+
+
+async def resume(
+    session: AsyncSession,
+    run_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    approval: Literal["approved", "rejected"] | None = None,
+) -> RunEnqueueResponse:
+    """Validate ownership + resumability, flip status back to "pending".
+
+    Does not execute — the caller re-enqueues "execute_run" with resume=True
+    (and resume_value=approval, if given), same enqueue/execute split as
+    create_pending.
+
+    "running" is included alongside "interrupted" because a killed worker
+    process leaves no code path to ever set "interrupted" — the run just
+    stays "running" forever with a valid checkpoint sitting unused. That's
+    exactly the crash-recovery case this endpoint exists for.
+
+    Caveat: accepting "running" assumes at most one worker is ever actually
+    executing a given run at a time (true for a single arq worker process, or
+    for many workers as long as no run_id is ever double-enqueued). There is
+    no liveness check or lease here — if the original worker is in fact still
+    alive and mid-execution, calling resume re-enqueues a second job against
+    the same thread_id, and the two would race on the same checkpoint and the
+    same tool_calls idempotency keys. That race is exactly what
+    ToolCallAmbiguousError and the tool_calls unique constraint exist to fail
+    loudly on rather than silently double-firing a side effect, but it would
+    still surface as a confusing error rather than being prevented up front.
+
+    If the run is awaiting a human-in-the-loop decision (awaiting_approval),
+    approval must be provided — there's nothing else for resume to do with
+    a paused require_approval node.
+    """
+    run = await _run_repo.get(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    agent = await _agent_repo.get(session, run.agent_id)
+    if agent is None or agent.owner_id != owner_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your run")
+    if run.status not in _RESUMABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Run is {run.status!r}; only running/interrupted runs can be resumed",
+        )
+    if run.awaiting_approval and approval is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Run is awaiting a human-in-the-loop decision; provide 'approval'",
+        )
+    run = await _run_repo.update_status(session, run, "pending", awaiting_approval=False)
+    await session.commit()
+    return RunEnqueueResponse(run_id=run.id, status="pending")
+
+
+async def replay(
+    session: AsyncSession,
+    run_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    from_step: int,
+    checkpointer: BaseCheckpointSaver[Any],
+) -> RunEnqueueResponse:
+    """Fork a NEW run from an existing run's checkpoint at from_step.
+
+    Copies the checkpoint to a fresh thread_id and creates a new pending Run
+    row pinned to the SAME agent_version_id as the original — never the
+    agent's current version — so the forked run replays against the exact
+    graph definition the original ran on (the replay-safety contract's
+    versioned-graphs rule). The caller re-enqueues "execute_run" with
+    resume=True so the new run continues forward from the forked checkpoint
+    rather than starting from fresh input.
+    """
+    old_run = await _run_repo.get(session, run_id)
+    if old_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    agent = await _agent_repo.get(session, old_run.agent_id)
+    if agent is None or agent.owner_id != owner_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your run")
+
+    new_thread_id = str(uuid.uuid4())
+    found = await fork_thread_at_step(checkpointer, old_run.thread_id, new_thread_id, from_step)
+    if not found:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No checkpoint found at step {from_step}",
+        )
+
+    new_run = await _run_repo.create(
+        session,
+        agent_id=old_run.agent_id,
+        agent_version_id=old_run.agent_version_id,
+        thread_id=new_thread_id,
+        input_json=old_run.input_json,
+    )
+    await session.commit()
+    return RunEnqueueResponse(run_id=new_run.id, status="pending")
 
 
 async def get_or_404(

@@ -6,6 +6,7 @@ that serialises this dict. Use str for UUIDs, not uuid.UUID objects.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from typing_extensions import TypedDict
@@ -21,3 +22,8 @@ class RunState(TypedDict):
     output: str | None  # final answer, set by the output node
     step_index: int  # incremented by handlers; used to derive idempotency keys
     error: str | None  # non-None means a handler caught an unrecoverable error
+
+
+# Lives here (not handlers.py) so app.runtime.retry can depend on the type
+# without creating a handlers.py <-> retry.py import cycle.
+NodeHandler = Callable[[RunState], Awaitable[dict[str, Any]]]

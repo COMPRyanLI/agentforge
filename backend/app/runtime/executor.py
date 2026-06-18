@@ -7,45 +7,75 @@ never inside this module — that would make them non-deterministic on replay.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 
 from app.runtime.state import RunState
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionResult:
+    output: str | None
+    # Set when the graph paused on a human-in-the-loop interrupt() call
+    # instead of finishing — "paused for a decision" is not an error, so
+    # this is a return value, not an exception.
+    awaiting_approval: dict[str, Any] | None = None
 
 
 async def execute_graph(
     compiled_graph: CompiledStateGraph[RunState, RunState, RunState],
     run_id: str,
     thread_id: str,
-    user_input: str,
+    user_input: str | None,
     deadline: float = 120.0,
-) -> str | None:
-    """Invoke the compiled graph and return the final output string.
+    resume: bool = False,
+    resume_value: Any = None,  # justified: mirrors langgraph.types.Command(resume=...)'s Any
+) -> ExecutionResult:
+    """Invoke the compiled graph and return its output (or pause state).
 
     Args:
         compiled_graph: result of GraphCompiler.compile()
         run_id: UUID string of the Run record (for tracing inside handlers)
-        thread_id: unique execution thread; will be the checkpoint key in Phase 4
-        user_input: the human message that starts the conversation
+        thread_id: unique execution thread; the checkpoint key
+        user_input: the human message that starts the conversation; ignored
+            when resume=True (the checkpointer-resumed state already has it)
         deadline: seconds before asyncio.TimeoutError is raised
+        resume: when True, continue from the last checkpoint on thread_id
+            instead of starting a fresh run
+        resume_value: when set (only meaningful if resume=True), the graph
+            resumes via Command(resume=resume_value) instead of a bare
+            ainvoke(None, ...) — this is how a human's approval/rejection
+            decision is delivered to a paused interrupt() call. None means
+            "no pending interrupt to answer", i.e. a plain crash-recovery resume.
 
     Returns:
-        The final assistant answer, or None if no output node produced content.
+        ExecutionResult with the final output, or with awaiting_approval set
+        if the graph paused on a human-in-the-loop interrupt() call.
     """
-    initial_state: RunState = {
-        "run_id": run_id,
-        "messages": [{"role": "user", "content": user_input}],
-        "output": None,
-        "step_index": 0,
-        "error": None,
-    }
-    # configurable thread_id is the checkpoint key; Phase 4 will attach the
-    # checkpointer here — no other change required in this function.
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
+    graph_input: RunState | Command[Any] | None
+    if resume:
+        graph_input = Command(resume=resume_value) if resume_value is not None else None
+    else:
+        assert user_input is not None, "user_input is required for a fresh (non-resume) run"
+        graph_input = {
+            "run_id": run_id,
+            "messages": [{"role": "user", "content": user_input}],
+            "output": None,
+            "step_index": 0,
+            "error": None,
+        }
+
     async with asyncio.timeout(deadline):
-        raw: Any = await compiled_graph.ainvoke(initial_state, config)
+        raw: Any = await compiled_graph.ainvoke(graph_input, config)
     result: dict[str, Any] = raw
-    return result.get("output")
+
+    interrupts = result.get("__interrupt__")
+    if interrupts:
+        return ExecutionResult(output=None, awaiting_approval=interrupts[0].value)
+    return ExecutionResult(output=result.get("output"))

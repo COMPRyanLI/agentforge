@@ -47,6 +47,7 @@ class RunRepo:
         error_json: dict[str, Any] | None = None,
         started_at: datetime | None = None,
         ended_at: datetime | None = None,
+        awaiting_approval: bool | None = None,
     ) -> Run:
         run.status = status
         if output_json is not None:
@@ -57,6 +58,8 @@ class RunRepo:
             run.started_at = started_at
         if ended_at is not None:
             run.ended_at = ended_at
+        if awaiting_approval is not None:
+            run.awaiting_approval = awaiting_approval
         await session.flush()
         await session.refresh(run)
         return run

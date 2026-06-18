@@ -22,3 +22,14 @@ class ToolNotFoundError(AgentRuntimeError):
 
 class ToolExecutionError(AgentRuntimeError):
     """Raised when a tool's implementation raises during invocation."""
+
+
+class ToolCallAmbiguousError(AgentRuntimeError):
+    """Raised when a tool_calls row for an idempotency key is stuck "pending".
+
+    This means a prior attempt called the tool and the process crashed before
+    recording whether it succeeded — whether the side effect actually fired is
+    unknown. Re-invoking could double-fire it, so this is treated as a
+    permanent failure requiring manual verification of the external system's
+    state, not an automatic retry.
+    """

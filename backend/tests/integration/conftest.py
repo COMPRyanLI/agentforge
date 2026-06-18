@@ -5,11 +5,19 @@ and an ASGI test client whose get_session dependency is overridden with a
 per-test transaction that rolls back after each test.
 """
 
+import asyncio
 import os
+import sys
 from collections.abc import AsyncIterator, Iterator
 
 # Ryuk (testcontainers reaper) cannot reliably bind its port on Windows Docker Desktop.
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
+# psycopg's async mode (used by the LangGraph Postgres checkpointer) cannot run on
+# Windows' default ProactorEventLoop; must set this before pytest-asyncio creates
+# the session-scoped event loop.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore[attr-defined]
 
 import pytest
 from httpx import ASGITransport, AsyncClient

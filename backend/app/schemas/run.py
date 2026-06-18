@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 
 class RunCreate(BaseModel):
     input: str
+
+
+class RunResumeRequest(BaseModel):
+    """Optional body for POST /runs/{id}/resume.
+
+    approval is only meaningful when the run is paused awaiting a
+    human-in-the-loop decision (RunRead.awaiting_approval is True) — omit it
+    for a plain crash-recovery resume.
+    """
+
+    approval: Literal["approved", "rejected"] | None = None
 
 
 class RunRead(BaseModel):
@@ -26,6 +37,7 @@ class RunRead(BaseModel):
     started_at: datetime | None
     ended_at: datetime | None
     error_json: dict[str, Any] | None
+    awaiting_approval: bool
     created_at: datetime
 
 

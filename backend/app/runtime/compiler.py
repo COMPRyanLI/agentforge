@@ -9,20 +9,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.llm.provider import LLMProvider
 from app.runtime.errors import GraphCompilationError
 from app.runtime.handlers import (
-    NodeHandler,
     make_input_handler,
     make_llm_handler,
     make_output_handler,
     make_tool_handler,
 )
 from app.runtime.registry import ToolRegistry
-from app.runtime.state import RunState
+from app.runtime.retry import RetryPolicy, with_retry
+from app.runtime.state import NodeHandler, RunState
 
 if TYPE_CHECKING:
     from app.runtime.event_emitter import EventEmitter
@@ -35,14 +37,18 @@ class GraphCompiler:
         self,
         llm: LLMProvider,
         registry: ToolRegistry,
+        session_factory: async_sessionmaker[AsyncSession],
         tool_id_to_name: dict[str, str] | None = None,
         event_emitter: EventEmitter | None = None,
+        checkpointer: BaseCheckpointSaver[Any] | None = None,
     ) -> None:
         self._llm = llm
         self._registry = registry
+        self._session_factory = session_factory
         # Maps str(tool_uuid) → tool.name for standalone tool nodes
         self._tool_id_to_name: dict[str, str] = tool_id_to_name or {}
         self._event_emitter = event_emitter
+        self._checkpointer = checkpointer
 
     def compile(
         self, graph_json: dict[str, Any]
@@ -67,7 +73,15 @@ class GraphCompiler:
         sg: StateGraph[RunState] = StateGraph(RunState)
 
         for node in nodes:
+            node_id: str = node.get("id", node.get("type", ""))
             handler = self._make_handler(node)
+            # The llm node retries its own individual llm.chat()/tool calls
+            # internally (see make_llm_handler) — wrapping its whole node here
+            # too would re-issue already-completed LLM calls on a tool retry.
+            if node.get("type") != "llm":
+                handler = with_retry(
+                    handler, node_id, self._retry_policy(node), self._event_emitter
+                )
             # justified: LangGraph 1.2.5 add_node overloads require _Node[NodeInputT]
             # which doesn't recognise Callable[[TypedDict], Awaitable[dict]] directly.
             sg.add_node(node["id"], handler)  # type: ignore[call-overload]
@@ -80,7 +94,17 @@ class GraphCompiler:
         sg.set_entry_point(entry_id)
         sg.add_edge(exit_id, END)
 
-        return sg.compile()  # type: ignore[return-value]
+        return sg.compile(checkpointer=self._checkpointer)  # type: ignore[return-value]
+
+    def _retry_policy(self, node: dict[str, Any]) -> RetryPolicy:
+        data: dict[str, Any] = node.get("data") or {}
+        retry_data: dict[str, Any] = data.get("retry") or {}
+        kwargs: dict[str, Any] = {}
+        if "max_retries" in retry_data:
+            kwargs["max_retries"] = int(retry_data["max_retries"])
+        if "backoff_seconds" in retry_data:
+            kwargs["base_backoff_seconds"] = float(retry_data["backoff_seconds"])
+        return RetryPolicy(**kwargs)
 
     def _make_handler(self, node: dict[str, Any]) -> NodeHandler:
         node_type: str = node.get("type", "")
@@ -97,6 +121,8 @@ class GraphCompiler:
                     registry=self._registry,
                     tool_names=list(data.get("tools") or []),
                     system_prompt=str(data.get("system_prompt") or "You are a helpful assistant."),
+                    session_factory=self._session_factory,
+                    retry_policy=self._retry_policy(node),
                     node_id=node_id,
                     event_emitter=emitter,
                 )
@@ -104,7 +130,12 @@ class GraphCompiler:
                 tool_id: str = str(data.get("tool_id") or "")
                 tool_name = self._tool_id_to_name.get(tool_id, tool_id)
                 return make_tool_handler(
-                    self._registry, tool_name, node_id=node_id, event_emitter=emitter
+                    self._registry,
+                    tool_name,
+                    self._session_factory,
+                    node_id=node_id,
+                    event_emitter=emitter,
+                    require_approval=bool(data.get("require_approval", False)),
                 )
             case "output":
                 return make_output_handler(node_id=node_id, event_emitter=emitter)

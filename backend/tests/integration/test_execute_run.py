@@ -32,7 +32,9 @@ SIMPLE_GRAPH: dict[str, Any] = {
 }
 
 
-async def _seed_pending_run(session: AsyncSession) -> Run:
+async def _seed_pending_run(
+    session: AsyncSession, graph_json: dict[str, Any] = SIMPLE_GRAPH
+) -> Run:
     user = User(email=f"worker_{uuid.uuid4().hex[:8]}@example.com", password_hash="x")
     session.add(user)
     await session.flush()
@@ -41,7 +43,7 @@ async def _seed_pending_run(session: AsyncSession) -> Run:
     session.add(agent)
     await session.flush()
 
-    version = AgentVersion(agent_id=agent.id, version_number=1, graph_json=SIMPLE_GRAPH)
+    version = AgentVersion(agent_id=agent.id, version_number=1, graph_json=graph_json)
     session.add(version)
     await session.flush()
 
@@ -120,6 +122,83 @@ async def test_execute_run_sets_failed_on_llm_error(db_session: AsyncSession) ->
     assert updated is not None
     assert updated.status == "failed"
     assert updated.error_json is not None
+
+
+FAST_RETRY_GRAPH: dict[str, Any] = {
+    "nodes": [
+        {"id": "in", "type": "input"},
+        {
+            "id": "llm1",
+            "type": "llm",
+            "data": {
+                "system_prompt": "Be helpful.",
+                "tools": [],
+                "retry": {"max_retries": 1, "backoff_seconds": 0},
+            },
+        },
+        {"id": "out", "type": "output"},
+    ],
+    "edges": [
+        {"source": "in", "target": "llm1"},
+        {"source": "llm1", "target": "out"},
+    ],
+}
+
+
+async def test_execute_run_sets_interrupted_on_transient_error_after_retries(
+    db_session: AsyncSession,
+) -> None:
+    run = await _seed_pending_run(db_session, graph_json=FAST_RETRY_GRAPH)
+    run_id_str = str(run.id)
+
+    mock_redis = AsyncMock()
+    mock_llm = AsyncMock()
+    mock_llm.chat.side_effect = ConnectionError("ollama unreachable")
+    factory = _make_factory(db_session)
+
+    with (
+        patch("app.workers.worker.redis_asyncio.from_url", return_value=mock_redis),
+        patch("app.workers.worker.async_sessionmaker", return_value=factory),
+        patch("app.workers.worker.OllamaProvider", return_value=mock_llm),
+    ):
+        await execute_run({}, run_id_str)
+
+    repo = RunRepo()
+    updated = await repo.get(db_session, uuid.UUID(run_id_str))
+    assert updated is not None
+    assert updated.status == "interrupted"
+    assert updated.error_json is not None
+    # initial attempt + 1 retry (max_retries=1)
+    assert mock_llm.chat.call_count == 2
+
+
+async def test_execute_run_sets_failed_on_permanent_agent_runtime_error(
+    db_session: AsyncSession,
+) -> None:
+    from app.runtime.errors import ToolArgValidationError
+
+    run = await _seed_pending_run(db_session, graph_json=FAST_RETRY_GRAPH)
+    run_id_str = str(run.id)
+
+    mock_redis = AsyncMock()
+    mock_llm = AsyncMock()
+    mock_llm.chat.side_effect = ToolArgValidationError("bad args")
+    factory = _make_factory(db_session)
+
+    with (
+        patch("app.workers.worker.redis_asyncio.from_url", return_value=mock_redis),
+        patch("app.workers.worker.async_sessionmaker", return_value=factory),
+        patch("app.workers.worker.OllamaProvider", return_value=mock_llm),
+    ):
+        await execute_run({}, run_id_str)
+
+    repo = RunRepo()
+    updated = await repo.get(db_session, uuid.UUID(run_id_str))
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error_json is not None
+    # permanent error — never retried
+    assert mock_llm.chat.call_count == 1
 
 
 async def test_execute_run_not_found_returns_gracefully() -> None:

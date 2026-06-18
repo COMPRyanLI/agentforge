@@ -12,6 +12,7 @@ from app.runtime.builtins import register_builtins
 from app.runtime.compiler import GraphCompiler
 from app.runtime.errors import GraphCompilationError
 from app.runtime.registry import ToolRegistry
+from tests.unit.runtime.conftest import dummy_session_factory
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -34,7 +35,7 @@ def mock_llm() -> LLMProvider:
 
 @pytest.fixture
 def compiler(mock_llm: LLMProvider, registry: ToolRegistry) -> GraphCompiler:
-    return GraphCompiler(llm=mock_llm, registry=registry)
+    return GraphCompiler(llm=mock_llm, registry=registry, session_factory=dummy_session_factory)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +93,7 @@ async def test_compile_llm_graph_returns_output(
     mock_llm: LLMProvider, registry: ToolRegistry
 ) -> None:
     mock_llm.chat.return_value = LLMResponse(content="Hello!", tool_calls=[])  # type: ignore[attr-defined]
-    c = GraphCompiler(mock_llm, registry).compile(LLM_GRAPH)
+    c = GraphCompiler(mock_llm, registry, dummy_session_factory).compile(LLM_GRAPH)
     from app.runtime.state import RunState
 
     state: RunState = {
@@ -124,7 +125,9 @@ TOOL_GRAPH: dict[str, Any] = {
 
 
 def test_compile_tool_node_with_id_mapping(mock_llm: LLMProvider, registry: ToolRegistry) -> None:
-    c = GraphCompiler(mock_llm, registry, tool_id_to_name={"calc-uuid": "calculator"})
+    c = GraphCompiler(
+        mock_llm, registry, dummy_session_factory, tool_id_to_name={"calc-uuid": "calculator"}
+    )
     compiled = c.compile(TOOL_GRAPH)
     assert compiled is not None
 

@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/format.sh",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/format.sh\"",
             "timeout": 30
           }
         ]

@@ -19,6 +19,8 @@ dependencies = [
     "pyjwt>=2.9",
     "langgraph>=1.2.5",
     "jsonschema>=4.26.0",
+    "langgraph-checkpoint-postgres>=3.1.0",
+    "psycopg[binary]>=3.3.4",
 ]
 
 [dependency-groups]
@@ -29,6 +31,7 @@ dev = [
     "mypy>=1.13",
     "testcontainers[postgresql]>=4.8",
     "types-jsonschema>=4.26.0.20260518",
+    "pytest-timeout>=2.4.0",
 ]
 
 [tool.uv]

@@ -13,6 +13,7 @@ from app.runtime.builtins import register_builtins
 from app.runtime.compiler import GraphCompiler
 from app.runtime.executor import execute_graph
 from app.runtime.registry import ToolRegistry
+from tests.unit.runtime.conftest import dummy_session_factory
 
 SIMPLE_GRAPH: dict[str, Any] = {
     "nodes": [
@@ -38,17 +39,18 @@ def mock_llm() -> LLMProvider:
 def compiled_graph(mock_llm: LLMProvider) -> Any:
     registry = ToolRegistry()
     register_builtins(registry)
-    return GraphCompiler(mock_llm, registry).compile(SIMPLE_GRAPH)
+    return GraphCompiler(mock_llm, registry, dummy_session_factory).compile(SIMPLE_GRAPH)
 
 
 async def test_execute_graph_returns_output(compiled_graph: Any, mock_llm: LLMProvider) -> None:
-    output = await execute_graph(
+    result = await execute_graph(
         compiled_graph,
         run_id="run-1",
         thread_id="thread-1",
         user_input="what is the answer?",
     )
-    assert output == "The answer is 42."
+    assert result.output == "The answer is 42."
+    assert result.awaiting_approval is None
 
 
 async def test_execute_graph_timeout_raises(mock_llm: LLMProvider) -> None:
@@ -60,7 +62,7 @@ async def test_execute_graph_timeout_raises(mock_llm: LLMProvider) -> None:
         await asyncio.sleep(9999)
 
     mock_llm.chat.side_effect = _hang  # type: ignore[attr-defined]
-    cg = GraphCompiler(mock_llm, registry).compile(SIMPLE_GRAPH)
+    cg = GraphCompiler(mock_llm, registry, dummy_session_factory).compile(SIMPLE_GRAPH)
 
     with pytest.raises(TimeoutError):
         await execute_graph(

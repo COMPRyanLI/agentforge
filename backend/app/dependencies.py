@@ -8,6 +8,7 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from app.db import get_session
 from app.llm.provider import LLMProvider, OllamaProvider
 from app.models.user import User
 from app.repositories.user import UserRepo
+from app.runtime.checkpointer import get_checkpointer as _get_checkpointer
 from app.security import decode_access_token
 
 _http_bearer = HTTPBearer()
@@ -100,3 +102,12 @@ async def get_redis(
         yield client
     finally:
         await client.aclose()
+
+
+async def get_checkpointer() -> AsyncPostgresSaver:
+    """Provide the process-wide checkpointer for reading checkpoint history (replay).
+
+    Lazily created on first use, same singleton pattern as app/db.py's engine —
+    not closed per-request since the pool is long-lived for the app process.
+    """
+    return await _get_checkpointer()

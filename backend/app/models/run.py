@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,6 +26,11 @@ class Run(UUIDPrimaryKey, TimestampMixin, Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # justified: error shape is open-ended JSON
     error_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # True while status=="interrupted" specifically because a require_approval
+    # tool node paused for a human decision — distinguishes that from a
+    # crash/transient-failure interruption without re-deriving it from
+    # run_events on every resume call.
+    awaiting_approval: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class RunEvent(UUIDPrimaryKey, Base):
@@ -47,7 +52,8 @@ class ToolCall(UUIDPrimaryKey, TimestampMixin, Base):
 
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
     node_id: Mapped[str] = mapped_column(String(255))
-    # idempotency_key = (run_id, node_id, step_index) — ensures exactly-once side effects on resume
+    # idempotency_key = (run_id, node_id, step_index, call_index) — call_index disambiguates
+    # multiple tool calls within one llm-node iteration; ensures exactly-once side effects on resume
     idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     # status: pending | completed | failed
     status: Mapped[str] = mapped_column(String(20), default="pending")
