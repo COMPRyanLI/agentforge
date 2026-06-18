@@ -192,7 +192,9 @@ A `GraphCompiler` turns `graph_json` into a LangGraph `StateGraph`. Each node `t
 - `llm` → calls Gemma via your `LLMProvider`; if the node has tools, runs the tool-calling loop.
 - `tool` → looks up the tool in the registry, validates args against its JSON schema, invokes it.
 - `condition` → safe-evaluates a boolean expression over run state to pick an edge.
-- `loop` → bounded iteration (with a hard max-iterations guard against runaway loops).
+- `loop` → bounded iteration (with a hard max-iterations guard against runaway loops). Flat
+  only — a loop nested inside another loop's body is rejected at compile time, not a
+  supported pattern in this version.
 - `output` → finalizes run output.
 
 The shared **run state** is a typed dict (messages, scratchpad vars, last tool result, step counter).

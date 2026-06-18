@@ -7,11 +7,19 @@ server makes the request, not the user's browser. That's the textbook
 SSRF-via-webhook-tool shape (an attacker registers a "tool" pointing at
 http://169.254.169.254/... or an internal service, then tricks/waits for an
 agent to call it), so every request through this module is restricted to:
-https only, no following redirects, the resolved IP checked against
-private/loopback/link-local/multicast/reserved ranges (not just the hostname
-string, since a hostname can resolve to a blocked address via DNS rebinding),
-and a capped response size so a malicious or misbehaving endpoint can't feed
-unbounded data back into the LLM's context.
+https only, no following redirects, a capped response size so a malicious
+or misbehaving endpoint can't feed unbounded data back into the LLM's
+context, and DNS-rebinding-resistant IP validation: the hostname is
+resolved exactly once, the resolved IP is checked against private/loopback/
+link-local/multicast/reserved ranges, and the *actual request* is then
+pinned to dial that literal IP (TLS server_hostname/SNI is set to the
+original hostname via httpx's `sni_hostname` request extension, so
+certificate verification still matches the real hostname). Without this
+pinning, checking the hostname once and then handing the original hostname
+string to httpx would let it re-resolve DNS independently at connect time —
+a attacker-controlled DNS record with a short TTL could return a public IP
+for the validation lookup and a private/metadata IP moments later for the
+real connection, defeating the check entirely (classic TOCTOU rebinding).
 """
 
 from __future__ import annotations
@@ -69,9 +77,26 @@ async def _resolve(host: str, port: int) -> list[tuple[Any, ...]]:
     return await asyncio.get_running_loop().getaddrinfo(host, port)
 
 
-async def _validate_url(url: str) -> None:
-    """https-only, and the resolved IP (not just the hostname string) must
-    not fall in a private/loopback/link-local/multicast/reserved range."""
+def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local  # covers the 169.254.169.254 cloud metadata address
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+async def _resolve_and_validate(url: str) -> tuple[str, str]:
+    """https-only; resolve the host exactly once and validate that IP.
+
+    Returns (validated_ip, original_host) — the caller must dial
+    validated_ip directly (not re-resolve original_host) so the IP that was
+    checked is the IP that's actually connected to. See the module
+    docstring for why a separate "check the hostname, then let httpx
+    resolve again" approach is vulnerable to DNS rebinding.
+    """
     parsed = httpx.URL(url)
     if parsed.scheme != "https":
         raise ToolExecutionError(f"HTTP tool URL must use https, got scheme {parsed.scheme!r}")
@@ -84,22 +109,20 @@ async def _validate_url(url: str) -> None:
         raise ToolExecutionError(
             f"HTTP tool URL host {host!r} could not be resolved: {exc}"
         ) from exc
+    if not addrinfo:
+        raise ToolExecutionError(f"HTTP tool URL host {host!r} did not resolve to any address")
 
-    for _family, _type, _proto, _canonname, sockaddr in addrinfo:
-        ip = ipaddress.ip_address(sockaddr[0])
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local  # covers the 169.254.169.254 cloud metadata address
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            raise ToolExecutionError(
-                f"HTTP tool URL host {host!r} resolves to {ip}, which is a private/"
-                "loopback/link-local/multicast/reserved address — refusing to "
-                "avoid a server-side request forgery"
-            )
+    # Pin to the first resolved address — deterministic, and the only one
+    # ever actually validated, so it must also be the only one ever dialed.
+    resolved_ip = addrinfo[0][4][0]
+    ip = ipaddress.ip_address(resolved_ip)
+    if _is_blocked_ip(ip):
+        raise ToolExecutionError(
+            f"HTTP tool URL host {host!r} resolves to {ip}, which is a private/"
+            "loopback/link-local/multicast/reserved address — refusing to "
+            "avoid a server-side request forgery"
+        )
+    return resolved_ip, host
 
 
 def _make_client(timeout: float) -> httpx.AsyncClient:
@@ -112,7 +135,15 @@ def make_http_tool(tool: Tool) -> RegisteredTool:
     config = parse_http_tool_config(tool.config_json)
 
     async def _impl(args: dict[str, Any]) -> dict[str, Any]:
-        await _validate_url(config.url)
+        validated_ip, original_host = await _resolve_and_validate(config.url)
+        # Dial the exact IP that was just validated — copy_with(host=...)
+        # only rewrites the connection target, not the Host header httpx
+        # sends (that's still derived from the URL's original host unless
+        # overridden), so set Host explicitly and restore correct TLS
+        # verification via the sni_hostname extension.
+        pinned_url = httpx.URL(config.url).copy_with(host=validated_ip)
+        headers = dict(config.headers or {})
+        headers.setdefault("Host", original_host)
 
         params = args if config.method in ("GET", "DELETE") else None
         json_body = args if config.method not in ("GET", "DELETE") else None
@@ -122,10 +153,11 @@ def make_http_tool(tool: Tool) -> RegisteredTool:
                 _make_client(config.timeout_seconds) as client,
                 client.stream(
                     config.method,
-                    config.url,
+                    pinned_url,
                     params=params,
                     json=json_body,
-                    headers=config.headers,
+                    headers=headers,
+                    extensions={"sni_hostname": original_host},
                 ) as response,
             ):
                 if response.is_redirect:

@@ -111,6 +111,40 @@ def test_loop_node_zero_max_iterations_raises(
         c.compile(_loop_graph(max_iterations=0))
 
 
+def test_nested_loop_node_raises(mock_llm: LLMProvider, registry: ToolRegistry) -> None:
+    """An inner loop node's loop_counters never resets across outer
+    iterations, so it would silently run far fewer iterations than declared
+    rather than erroring — reject nesting at compile time instead."""
+    graph: dict[str, Any] = {
+        "nodes": [
+            {"id": "in", "type": "input"},
+            {
+                "id": "outer",
+                "type": "loop",
+                "data": {"expr": "step_index >= 0", "max_iterations": 3},
+            },
+            {
+                "id": "inner",
+                "type": "loop",
+                "data": {"expr": "step_index >= 0", "max_iterations": 5},
+            },
+            {"id": "llm1", "type": "llm", "data": {"system_prompt": "go", "tools": []}},
+            {"id": "out", "type": "output"},
+        ],
+        "edges": [
+            {"source": "in", "target": "outer"},
+            {"source": "outer", "target": "inner", "condition": "true"},
+            {"source": "outer", "target": "out", "condition": "false"},
+            {"source": "inner", "target": "llm1", "condition": "true"},
+            {"source": "inner", "target": "outer", "condition": "false"},
+            {"source": "llm1", "target": "inner"},
+        ],
+    }
+    c = GraphCompiler(mock_llm, registry, dummy_session_factory)
+    with pytest.raises(GraphCompilationError, match="nested"):
+        c.compile(graph)
+
+
 async def test_recursion_limit_sized_above_langgraph_default(
     mock_llm: LLMProvider, registry: ToolRegistry
 ) -> None:

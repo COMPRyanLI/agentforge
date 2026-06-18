@@ -75,6 +75,38 @@ export function validateGraph(graph: GraphJson): string[] {
     }
   }
 
+  // Nested loops: an inner loop's iteration counter never resets across
+  // outer iterations (see GraphCompiler._validate_no_nested_loops), so it
+  // would silently run far fewer iterations than declared rather than
+  // erroring. Reject at save time instead.
+  function loopBodyMembers(loopId: string): Set<string> {
+    const trueEdge = (edgesBySource.get(loopId) ?? []).find((e) => e.condition === "true");
+    const members = new Set<string>();
+    if (!trueEdge) return members;
+    const stack = [trueEdge.target];
+    while (stack.length > 0) {
+      const id = stack.pop();
+      if (id === undefined || members.has(id) || id === loopId) continue;
+      members.add(id);
+      for (const edge of edgesBySource.get(id) ?? []) {
+        stack.push(edge.target);
+      }
+    }
+    return members;
+  }
+
+  const loopIds = nodes.filter((n) => n.type === "loop").map((n) => n.id);
+  for (const outer of loopIds) {
+    const body = loopBodyMembers(outer);
+    for (const inner of loopIds) {
+      if (inner !== outer && body.has(inner)) {
+        errors.push(
+          `loop node '${inner}' is nested inside loop node '${outer}''s body — nested loops are not supported; flatten into a single loop.`
+        );
+      }
+    }
+  }
+
   // Cycle check: any cycle in the edge graph must pass through a loop node,
   // mirroring GraphCompiler._validate_no_unguarded_cycles.
   const visited = new Set<string>();

@@ -107,5 +107,8 @@ cd web && npm install && npm run dev
 ## Scope guardrails (do NOT build unless asked)
 - No multi-tenant org/RBAC, billing, or payment flows.
 - No more than ~6 node types (input, llm, tool, condition, loop, output). Quality > breadth.
+- Loop nodes are flat only — a loop node nested inside another loop's body is rejected at
+  compile time (`loop_counters` doesn't reset per outer iteration); nested loops are a
+  non-goal for this version.
 - Don't add new infra services beyond the five above without asking.
 - The headline demo is **resume-from-crash**; protect that path above all else.

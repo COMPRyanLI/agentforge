@@ -163,4 +163,25 @@ describe("validateGraph", () => {
       true
     );
   });
+
+  it("rejects a loop node nested inside another loop's body", () => {
+    const g = graph({
+      nodes: [
+        { id: "in", type: "input" },
+        { id: "outer", type: "loop", data: { expr: "step_index >= 0", max_iterations: 3 } },
+        { id: "inner", type: "loop", data: { expr: "step_index >= 0", max_iterations: 5 } },
+        { id: "llm1", type: "llm" },
+        { id: "out", type: "output" },
+      ],
+      edges: [
+        { source: "in", target: "outer" },
+        { source: "outer", target: "inner", condition: "true" },
+        { source: "outer", target: "out", condition: "false" },
+        { source: "inner", target: "llm1", condition: "true" },
+        { source: "inner", target: "outer", condition: "false" },
+        { source: "llm1", target: "inner" },
+      ],
+    });
+    expect(validateGraph(g).some((e) => e.includes("nested loops are not supported"))).toBe(true);
+  });
 });

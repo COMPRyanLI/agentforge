@@ -161,6 +161,65 @@ async def test_oversized_response_rejected(monkeypatch: pytest.MonkeyPatch) -> N
         await registered.impl_fn({})
 
 
+async def test_request_is_pinned_to_the_validated_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The connection must target the exact IP that was validated, not a
+    hostname httpx would re-resolve independently — otherwise the IP check
+    is advisory only and DNS rebinding (a different IP at connect-time)
+    bypasses it entirely."""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["host"] = request.url.host
+        captured["host_header"] = request.headers.get("host")
+        captured["sni"] = request.extensions.get("sni_hostname")
+        return httpx.Response(200, json={"ok": True})
+
+    _patch_public_dns(monkeypatch)
+    _patch_transport(monkeypatch, handler)
+
+    tool = _make_tool({"url": "https://example.com/weather", "method": "GET"})
+    registered = make_http_tool(tool)
+    await registered.impl_fn({})
+
+    assert captured["host"] == "93.184.216.34"
+    assert captured["host_header"] == "example.com"
+    assert captured["sni"] == "example.com"
+
+
+async def test_dns_rebinding_does_not_bypass_the_ip_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simulate the classic rebinding attack: the resolver returns a public
+    IP (so the IP check passes), but if the real connection re-resolved the
+    hostname independently and got a private IP, the request would have
+    silently reached an internal address. Assert the transport never even
+    sees that private IP — i.e. the request is built against the IP that
+    was actually validated, with no second resolution in between."""
+    resolve_calls = 0
+
+    async def _rebinding_resolve(host: str, port: int) -> list[tuple[Any, ...]]:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        # A real rebinding DNS server would answer differently on a second
+        # query; if this module resolved twice, the second answer (private)
+        # would be the one that mattered.
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 443))]
+
+    monkeypatch.setattr(http_tool_module, "_resolve", _rebinding_resolve)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("transport should never be reached: IP check must reject first")
+
+    _patch_transport(monkeypatch, handler)
+
+    tool = _make_tool({"url": "https://attacker-controlled.example/x", "method": "GET"})
+    registered = make_http_tool(tool)
+    with pytest.raises(ToolExecutionError, match="private|loopback|link-local|reserved"):
+        await registered.impl_fn({})
+
+    # Resolved exactly once — there is no second, independent resolution at
+    # connect time for httpx to be tricked by.
+    assert resolve_calls == 1
+
+
 async def test_timeout_raises_tool_execution_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("timed out")

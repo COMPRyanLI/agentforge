@@ -109,6 +109,7 @@ class GraphCompiler:
         for edge in edges:
             edges_by_source[edge["source"]].append(edge)
         self._validate_loop_nodes_have_max_iterations(nodes, node_type_by_id, edges_by_source)
+        self._validate_no_nested_loops(nodes, node_type_by_id, edges_by_source)
 
         sg: StateGraph[RunState] = StateGraph(RunState)
 
@@ -154,6 +155,34 @@ class GraphCompiler:
         recursion_limit = self._compute_recursion_limit(nodes, node_type_by_id, edges_by_source)
         return CompileResult(graph=compiled, recursion_limit=recursion_limit)
 
+    def _validate_no_nested_loops(
+        self,
+        nodes: list[dict[str, Any]],
+        node_type_by_id: dict[str, str],
+        edges_by_source: dict[str, list[dict[str, Any]]],
+    ) -> None:
+        """Reject a loop node whose body contains another loop node.
+
+        loop_counters (RunState) is keyed only by node_id, with no notion of
+        "which outer iteration is this inner loop running under" — so an
+        inner loop's counter would never reset across outer iterations: it
+        hits its cap once and stays force-exited on every subsequent outer
+        pass, silently running far fewer iterations than declared instead of
+        erroring. Nesting is a non-goal for this version (flat loops are the
+        supported, tested, demoed case — see CLAUDE.md); reject it here with
+        a clear error rather than let it silently misbehave.
+        """
+        loop_ids = [n["id"] for n in nodes if node_type_by_id.get(n["id"]) == "loop"]
+        for outer in loop_ids:
+            body = self._loop_body_members(outer, edges_by_source)
+            for inner in loop_ids:
+                if inner != outer and inner in body:
+                    raise GraphCompilationError(
+                        f"loop node '{inner}' is nested inside loop node '{outer}''s body — "
+                        "nested loops are not supported (loop_counters does not reset "
+                        "per outer iteration); flatten into a single loop"
+                    )
+
     def _compute_recursion_limit(
         self,
         nodes: list[dict[str, Any]],
@@ -167,13 +196,12 @@ class GraphCompiler:
         a runaway loop means the actual bound is whatever that default happens
         to be (it's overridable via an environment variable, so it isn't even
         a fixed number), not the cap the graph author actually declared. This
-        computes an explicit limit tied to max_iterations instead. Each loop
+        computes an explicit limit tied to max_iterations instead: each loop
         node tick (the loop node's own re-entry, not just its body) counts as
         one super-step, so the budget per loop node is
         max_iterations * (body_width + 1) — the +1 is the loop node's own
-        per-iteration tick, body_width is the nodes reachable from the loop's
-        "true" edge before control returns to the loop node — plus one step
-        per node outside any loop, plus slack for the bookend ticks.
+        per-iteration tick. Nesting is rejected by _validate_no_nested_loops
+        before this runs, so loop budgets are independent and simply sum.
         """
         limit = len(nodes) + _RECURSION_LIMIT_SLACK
         for node in nodes:
@@ -181,22 +209,21 @@ class GraphCompiler:
                 continue
             data: dict[str, Any] = node.get("data") or {}
             max_iterations = int(data.get("max_iterations", 1))
-            body_width = max(1, self._loop_body_width(node["id"], edges_by_source)) + 1
+            body_width = len(self._loop_body_members(node["id"], edges_by_source)) + 1
             limit += max_iterations * body_width
         return limit
 
-    def _loop_body_width(
+    def _loop_body_members(
         self, loop_node_id: str, edges_by_source: dict[str, list[dict[str, Any]]]
-    ) -> int:
-        """Count nodes reachable from a loop node's "true" edge, stopping at
-        the edge back to the loop node itself — an upper bound on how many
-        node executions one loop iteration costs."""
+    ) -> set[str]:
+        """Node ids reachable from a loop node's "true" edge, stopping at
+        the edge back to the loop node itself."""
         true_target: str | None = None
         for edge in edges_by_source.get(loop_node_id, []):
             if edge.get("condition") == "true":
                 true_target = edge["target"]
         if true_target is None:
-            return 0
+            return set()
         visited: set[str] = set()
         stack = [true_target]
         while stack:
@@ -206,7 +233,7 @@ class GraphCompiler:
             visited.add(node_id)
             for edge in edges_by_source.get(node_id, []):
                 stack.append(edge["target"])
-        return len(visited)
+        return visited
 
     def _branch_targets(
         self, node_id: str, node_type: str, outgoing: list[dict[str, Any]]
