@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.dependencies import get_current_user
 from app.models.user import User
-from app.schemas.tool import ToolCreate, ToolRead, ToolUpdate
+from app.schemas.tool import ToolCreate, ToolRead, ToolTestRequest, ToolTestResponse, ToolUpdate
 from app.services import tool as tool_service
 
 router = APIRouter(tags=["tools"])
@@ -53,3 +53,13 @@ async def update_tool(
 ) -> ToolRead:
     tool = await tool_service.update(session, tool_id, current_user.id, data)
     return ToolRead.model_validate(tool)
+
+
+@router.post("/{tool_id}/test", response_model=ToolTestResponse)
+async def test_tool(
+    tool_id: uuid.UUID,
+    data: ToolTestRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ToolTestResponse:
+    return await tool_service.test_tool(session, tool_id, current_user.id, data)

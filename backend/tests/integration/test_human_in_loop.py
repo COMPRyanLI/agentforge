@@ -66,6 +66,7 @@ def _seed_state_with_pending_tool_call(run_id: str) -> RunState:
         "output": None,
         "step_index": 0,
         "error": None,
+        "loop_counters": {},
     }
 
 
@@ -133,13 +134,17 @@ def _build_compiled(checkpointer: AsyncPostgresSaver, db_session: AsyncSession) 
     mock_llm: LLMProvider = AsyncMock(spec=LLMProvider)
     registry = ToolRegistry()
     register_builtins(registry)
-    return GraphCompiler(
-        mock_llm,
-        registry,
-        _make_factory(db_session),
-        tool_id_to_name={"calc": "calculator"},
-        checkpointer=checkpointer,
-    ).compile(APPROVAL_GRAPH)
+    return (
+        GraphCompiler(
+            mock_llm,
+            registry,
+            _make_factory(db_session),
+            tool_id_to_name={"calc": "calculator"},
+            checkpointer=checkpointer,
+        )
+        .compile(APPROVAL_GRAPH)
+        .graph
+    )
 
 
 async def test_require_approval_pauses_graph_with_interrupt(

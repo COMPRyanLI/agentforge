@@ -39,7 +39,7 @@ def mock_llm() -> LLMProvider:
 def compiled_graph(mock_llm: LLMProvider) -> Any:
     registry = ToolRegistry()
     register_builtins(registry)
-    return GraphCompiler(mock_llm, registry, dummy_session_factory).compile(SIMPLE_GRAPH)
+    return GraphCompiler(mock_llm, registry, dummy_session_factory).compile(SIMPLE_GRAPH).graph
 
 
 async def test_execute_graph_returns_output(compiled_graph: Any, mock_llm: LLMProvider) -> None:
@@ -62,7 +62,7 @@ async def test_execute_graph_timeout_raises(mock_llm: LLMProvider) -> None:
         await asyncio.sleep(9999)
 
     mock_llm.chat.side_effect = _hang  # type: ignore[attr-defined]
-    cg = GraphCompiler(mock_llm, registry, dummy_session_factory).compile(SIMPLE_GRAPH)
+    cg = GraphCompiler(mock_llm, registry, dummy_session_factory).compile(SIMPLE_GRAPH).graph
 
     with pytest.raises(TimeoutError):
         await execute_graph(

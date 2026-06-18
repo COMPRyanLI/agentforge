@@ -34,6 +34,7 @@ async def execute_graph(
     deadline: float = 120.0,
     resume: bool = False,
     resume_value: Any = None,  # justified: mirrors langgraph.types.Command(resume=...)'s Any
+    recursion_limit: int | None = None,
 ) -> ExecutionResult:
     """Invoke the compiled graph and return its output (or pause state).
 
@@ -51,12 +52,21 @@ async def execute_graph(
             ainvoke(None, ...) — this is how a human's approval/rejection
             decision is delivered to a paused interrupt() call. None means
             "no pending interrupt to answer", i.e. a plain crash-recovery resume.
+        recursion_limit: caps LangGraph's internal step count. Must be sized
+            from the graph's loop node(s) max_iterations (see
+            GraphCompiler.compile's CompileResult.recursion_limit) — LangGraph's
+            own default (25) is far too low for a legitimate multi-iteration
+            loop and would raise GraphRecursionError before the loop's own
+            cap is ever reached. None falls back to LangGraph's default, which
+            is only safe for loop-free graphs.
 
     Returns:
         ExecutionResult with the final output, or with awaiting_approval set
         if the graph paused on a human-in-the-loop interrupt() call.
     """
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    if recursion_limit is not None:
+        config["recursion_limit"] = recursion_limit
 
     graph_input: RunState | Command[Any] | None
     if resume:
@@ -69,6 +79,7 @@ async def execute_graph(
             "output": None,
             "step_index": 0,
             "error": None,
+            "loop_counters": {},
         }
 
     async with asyncio.timeout(deadline):

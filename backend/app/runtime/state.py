@@ -22,6 +22,10 @@ class RunState(TypedDict):
     output: str | None  # final answer, set by the output node
     step_index: int  # incremented by handlers; used to derive idempotency keys
     error: str | None  # non-None means a handler caught an unrecoverable error
+    # Per-loop-node iteration counters, keyed by node_id. Checkpointed like every
+    # other field (plain overwrite semantics) — this is what lets a crash mid-loop
+    # resume at the correct iteration instead of restarting the loop.
+    loop_counters: dict[str, int]
 
 
 # Lives here (not handlers.py) so app.runtime.retry can depend on the type

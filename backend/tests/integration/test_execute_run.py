@@ -6,15 +6,21 @@ no live Ollama or Redis is needed in CI.
 
 from __future__ import annotations
 
+import socket
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.runtime.http_tool as http_tool_module
 from app.llm.provider import LLMResponse
+from app.llm.provider import ToolCall as LLMToolCall
 from app.models.agent import Agent, AgentVersion
 from app.models.run import Run
+from app.models.tool import Tool
 from app.models.user import User
 from app.repositories.run import RunRepo
 from app.workers.worker import execute_run
@@ -247,3 +253,109 @@ async def test_execute_run_publishes_events(db_session: AsyncSession) -> None:
     for call in mock_redis.publish.call_args_list:
         channel = call.args[0]
         assert channel == f"run:{run_id_str}"
+
+
+LLM_HTTP_TOOL_GRAPH: dict[str, Any] = {
+    "nodes": [
+        {"id": "in", "type": "input"},
+        {
+            "id": "llm1",
+            "type": "llm",
+            "data": {"system_prompt": "Use the tool.", "tools": ["get_weather"]},
+        },
+        {"id": "out", "type": "output"},
+    ],
+    "edges": [
+        {"source": "in", "target": "llm1"},
+        {"source": "llm1", "target": "out"},
+    ],
+}
+
+
+async def test_llm_node_invokes_custom_http_tool_by_name(db_session: AsyncSession) -> None:
+    """A graph's llm node references a user-defined HTTP tool by name —
+    proves app.runtime.registry_builder.build_registry actually wires a real
+    executor in for it, not just builtins."""
+    user = User(email=f"httptool_{uuid.uuid4().hex[:8]}@example.com", password_hash="x")
+    db_session.add(user)
+    await db_session.flush()
+
+    tool = Tool(
+        owner_id=user.id,
+        name="get_weather",
+        description="Get the weather",
+        json_schema={
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+        impl_type="http",
+        config_json={"url": "https://weather.example/lookup", "method": "GET"},
+    )
+    db_session.add(tool)
+    await db_session.flush()
+
+    agent = Agent(owner_id=user.id, name="weather-agent")
+    db_session.add(agent)
+    await db_session.flush()
+
+    version = AgentVersion(agent_id=agent.id, version_number=1, graph_json=LLM_HTTP_TOOL_GRAPH)
+    db_session.add(version)
+    await db_session.flush()
+    agent.current_version_id = version.id
+    await db_session.flush()
+
+    run = Run(
+        agent_id=agent.id,
+        agent_version_id=version.id,
+        thread_id=str(uuid.uuid4()),
+        status="pending",
+        input_json={"input": "what's the weather in nyc?"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    await db_session.commit()
+    run_id_str = str(run.id)
+
+    captured_query: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_query["q"] = str(request.url.params)
+        return httpx.Response(200, json={"forecast": "sunny"})
+
+    async def _fake_resolve(host: str, port: int) -> list[tuple[Any, ...]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    def _fake_make_client(timeout: float) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), follow_redirects=False, timeout=timeout
+        )
+
+    mock_redis = AsyncMock()
+    mock_llm = AsyncMock()
+    mock_llm.chat.side_effect = [
+        LLMResponse(
+            content=None,
+            tool_calls=[LLMToolCall(name="get_weather", arguments={"city": "nyc"})],
+        ),
+        LLMResponse(content="It's sunny in NYC.", tool_calls=[]),
+    ]
+    factory = _make_factory(db_session)
+
+    with (
+        patch("app.workers.worker.redis_asyncio.from_url", return_value=mock_redis),
+        patch("app.workers.worker.async_sessionmaker", return_value=factory),
+        patch("app.workers.worker.OllamaProvider", return_value=mock_llm),
+        pytest.MonkeyPatch().context() as mp,
+    ):
+        mp.setattr(http_tool_module, "_resolve", _fake_resolve)
+        mp.setattr(http_tool_module, "_make_client", _fake_make_client)
+        await execute_run({}, run_id_str)
+
+    repo = RunRepo()
+    updated = await repo.get(db_session, uuid.UUID(run_id_str))
+    assert updated is not None
+    assert updated.status == "succeeded"
+    assert updated.output_json is not None
+    assert updated.output_json.get("output") == "It's sunny in NYC."
+    assert "city=nyc" in captured_query["q"]

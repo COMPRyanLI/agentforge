@@ -318,6 +318,59 @@ def make_tool_handler(
     return _handler
 
 
+def make_condition_handler(
+    node_id: str = "condition",
+    event_emitter: EventEmitter | None = None,
+) -> NodeHandler:
+    """Condition node: passthrough.
+
+    The actual branching decision is made by the conditional-edge routing
+    function the GraphCompiler attaches via add_conditional_edges (see
+    app.runtime.expr / compiler.py) — this handler only exists so the node
+    shows up in run_events like every other node on the canvas.
+    """
+
+    async def _handler(state: RunState) -> dict[str, Any]:
+        ts = datetime.now(UTC)
+        await _maybe_emit(event_emitter, state["step_index"], node_id, "node_start", {}, ts)
+        await _maybe_emit(event_emitter, state["step_index"], node_id, "node_end", {}, ts)
+        return {}
+
+    return _handler
+
+
+def make_loop_handler(
+    node_id: str = "loop",
+    event_emitter: EventEmitter | None = None,
+) -> NodeHandler:
+    """Loop node: increments this node's checkpointed iteration counter.
+
+    The actual continue-or-exit decision (data.expr AND counter < max_iterations)
+    is made by the conditional-edge routing function the GraphCompiler attaches
+    via add_conditional_edges (see app.runtime.expr / compiler.py), exactly like
+    make_condition_handler — this handler only advances the counter and emits
+    node_start/node_end events.
+
+    loop_counters is plain RunState, checkpointed like every other field, so a
+    crash mid-loop resumes with the counter at its last-recorded value: LangGraph
+    re-enters this node fresh (no nondeterminism, no recomputation of "how many
+    iterations happened"), reads the checkpointed count, and continues from there.
+    """
+
+    async def _handler(state: RunState) -> dict[str, Any]:
+        ts = datetime.now(UTC)
+        step = state["step_index"]
+        await _maybe_emit(event_emitter, step, node_id, "node_start", {}, ts)
+        new_count = state["loop_counters"].get(node_id, 0) + 1
+        await _maybe_emit(event_emitter, step, node_id, "node_end", {"iteration": new_count}, ts)
+        return {
+            "loop_counters": {**state["loop_counters"], node_id: new_count},
+            "step_index": step + 1,
+        }
+
+    return _handler
+
+
 def make_output_handler(
     node_id: str = "output",
     event_emitter: EventEmitter | None = None,

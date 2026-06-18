@@ -35,3 +35,12 @@ class ToolRead(BaseModel):
     impl_type: str
     config_json: dict[str, Any] | None  # justified: config shape varies by impl_type
     created_at: datetime
+
+
+class ToolTestRequest(BaseModel):
+    args: dict[str, Any] = {}  # justified: tool-specific args, shape is the tool's json_schema
+
+
+class ToolTestResponse(BaseModel):
+    result: dict[str, Any] | None = None  # justified: tool result shape is open-ended
+    error: str | None = None

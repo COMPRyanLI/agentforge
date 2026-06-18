@@ -132,9 +132,11 @@ async def _run_graph_to_completion(checkpointer: AsyncPostgresSaver, thread_id: 
     ]
     registry = ToolRegistry()
     register_builtins(registry)
-    compiled = GraphCompiler(
-        mock_llm, registry, dummy_session_factory, checkpointer=checkpointer
-    ).compile(REPLAY_GRAPH)
+    compiled = (
+        GraphCompiler(mock_llm, registry, dummy_session_factory, checkpointer=checkpointer)
+        .compile(REPLAY_GRAPH)
+        .graph
+    )
 
     await execute_graph(
         compiled,
@@ -232,9 +234,11 @@ async def test_replay_then_resume_execute_reaches_succeeded(
     mock_llm.chat.return_value = LLMResponse(content="step 2 redone", tool_calls=[])  # type: ignore[attr-defined]
     registry = ToolRegistry()
     register_builtins(registry)
-    compiled = GraphCompiler(
-        mock_llm, registry, dummy_session_factory, checkpointer=checkpointer
-    ).compile(REPLAY_GRAPH)
+    compiled = (
+        GraphCompiler(mock_llm, registry, dummy_session_factory, checkpointer=checkpointer)
+        .compile(REPLAY_GRAPH)
+        .graph
+    )
 
     result = await execute_graph(
         compiled,

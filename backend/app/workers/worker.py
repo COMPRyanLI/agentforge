@@ -30,13 +30,12 @@ from app.llm.provider import OllamaProvider
 from app.repositories.agent import AgentRepo
 from app.repositories.run import RunRepo
 from app.repositories.tool import ToolRepo
-from app.runtime.builtins import register_builtins
 from app.runtime.checkpointer import close_checkpointer, get_checkpointer
 from app.runtime.compiler import GraphCompiler
 from app.runtime.errors import AgentRuntimeError
 from app.runtime.event_emitter import EventEmitter
 from app.runtime.executor import execute_graph
-from app.runtime.registry import ToolRegistry
+from app.runtime.registry_builder import build_registry, extract_tool_ids
 from app.runtime.retry import TRANSIENT_EXCEPTIONS
 
 logger = logging.getLogger(__name__)
@@ -44,19 +43,6 @@ logger = logging.getLogger(__name__)
 _run_repo = RunRepo()
 _agent_repo = AgentRepo()
 _tool_repo = ToolRepo()
-
-
-def _extract_tool_ids(graph_json: dict[str, Any]) -> list[uuid.UUID]:
-    ids: list[uuid.UUID] = []
-    for node in graph_json.get("nodes", []):
-        if node.get("type") == "tool":
-            raw_id = (node.get("data") or {}).get("tool_id")
-            if raw_id:
-                try:
-                    ids.append(uuid.UUID(str(raw_id)))
-                except ValueError:
-                    pass
-    return ids
 
 
 async def execute_run(  # justified: arq ctx is untyped dict
@@ -106,7 +92,7 @@ async def execute_run(  # justified: arq ctx is untyped dict
                 return
 
             graph_json: dict[str, Any] = version.graph_json
-            tool_id_list = _extract_tool_ids(graph_json)
+            tool_id_list = extract_tool_ids(graph_json)
             tool_id_to_name: dict[str, str] = {}
             for tid in tool_id_list:
                 tool = await _tool_repo.get(session, tid)
@@ -123,8 +109,7 @@ async def execute_run(  # justified: arq ctx is untyped dict
                     return
                 tool_id_to_name[str(tool.id)] = tool.name
 
-            registry = ToolRegistry()
-            register_builtins(registry)
+            registry = await build_registry(session, graph_json, agent.owner_id)
 
             emitter = EventEmitter(run_id_str, factory, redis_client)
             llm = OllamaProvider(settings.ollama_base_url, settings.ollama_model)
@@ -136,7 +121,8 @@ async def execute_run(  # justified: arq ctx is untyped dict
                 event_emitter=emitter,
                 checkpointer=ctx.get("checkpointer"),
             )
-            compiled = compiler.compile(graph_json)
+            compile_result = compiler.compile(graph_json)
+            compiled = compile_result.graph
 
             started_at = datetime.now(UTC)
             run = await _run_repo.update_status(session, run, "running", started_at=started_at)
@@ -153,6 +139,7 @@ async def execute_run(  # justified: arq ctx is untyped dict
                 user_input=user_input,
                 resume=resume,
                 resume_value=resume_value,
+                recursion_limit=compile_result.recursion_limit,
             )
             ended_at = datetime.now(UTC)
             async with factory() as session:

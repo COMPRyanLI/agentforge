@@ -33,6 +33,14 @@ class ToolRepo:
         result = await session.execute(select(Tool).where(Tool.owner_id == owner_id))
         return list(result.scalars().all())
 
+    async def get_by_name(
+        self, session: AsyncSession, owner_id: uuid.UUID, name: str
+    ) -> Tool | None:
+        result = await session.execute(
+            select(Tool).where(Tool.owner_id == owner_id, Tool.name == name)
+        )
+        return result.scalar_one_or_none()
+
     async def update(self, session: AsyncSession, tool: Tool, **kwargs: Any) -> Tool:
         for key, value in kwargs.items():
             setattr(tool, key, value)

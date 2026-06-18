@@ -64,8 +64,10 @@ async def test_second_ainvoke_on_same_thread_does_not_recall_llm(
     registry = ToolRegistry()
     register_builtins(registry)
 
-    compiled = GraphCompiler(mock_llm, registry, dummy_session_factory, checkpointer=saver).compile(
-        LLM_GRAPH
+    compiled = (
+        GraphCompiler(mock_llm, registry, dummy_session_factory, checkpointer=saver)
+        .compile(LLM_GRAPH)
+        .graph
     )
 
     thread_id = "checkpointed-thread"
@@ -76,6 +78,7 @@ async def test_second_ainvoke_on_same_thread_does_not_recall_llm(
         "output": None,
         "step_index": 0,
         "error": None,
+        "loop_counters": {},
     }
 
     result = await compiled.ainvoke(initial, config)
