@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -182,6 +182,69 @@ async def test_sse_done_frame_for_terminal_run(
     done_frames = [f for f in frames if f.get("data", {}).get("type") == "done"]
     assert len(done_frames) == 1
     assert done_frames[0]["data"]["status"] == "succeeded"
+
+
+async def test_sse_emits_done_even_if_live_poll_raises(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A still-running run whose live poll loop hits an unexpected exception
+    (DB hiccup, Redis hiccup, anything) must still terminate the SSE stream
+    with a terminal frame, not die silently — otherwise a client that only
+    reacts to the 'done' event hangs on "running" forever even though the
+    backing HTTP connection already closed.
+    """
+    from app.config import get_settings
+    from app.security import create_access_token
+
+    user = User(email=f"sse_exc_{uuid.uuid4().hex[:8]}@example.com", password_hash="x")
+    db_session.add(user)
+    await db_session.flush()
+
+    agent = Agent(owner_id=user.id, name="sse-agent")
+    db_session.add(agent)
+    await db_session.flush()
+
+    version = AgentVersion(agent_id=agent.id, version_number=1, graph_json={})
+    db_session.add(version)
+    await db_session.flush()
+
+    run = Run(
+        agent_id=agent.id,
+        agent_version_id=version.id,
+        thread_id=str(uuid.uuid4()),
+        status="running",
+        input_json={"input": "hi"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    await db_session.commit()
+
+    settings = get_settings()
+    token = create_access_token(str(user.id), settings)
+
+    # redis.asyncio.Redis.pubsub() is a plain sync method returning a PubSub
+    # object (whose own methods are async) — MagicMock for the client so
+    # .pubsub() itself isn't auto-wrapped as a coroutine like AsyncMock would.
+    pubsub = AsyncMock()
+    pubsub.get_message = AsyncMock(side_effect=ConnectionError("redis connection dropped"))
+    mock_redis = MagicMock()
+    mock_redis.pubsub.return_value = pubsub
+    _override_redis(mock_redis)
+    try:
+        async with client.stream(
+            "GET",
+            f"/runs/{run.id}/events",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as resp:
+            assert resp.status_code == 200
+            body = await resp.aread()
+    finally:
+        app.dependency_overrides.pop(get_redis, None)
+
+    frames = _parse_sse_frames(body.decode())
+    done_frames = [f for f in frames if f.get("data", {}).get("type") == "done"]
+    assert len(done_frames) == 1
+    assert done_frames[0]["data"]["status"] == "unknown"
 
 
 async def test_sse_unauthorized_returns_401_or_403(client: AsyncClient) -> None:

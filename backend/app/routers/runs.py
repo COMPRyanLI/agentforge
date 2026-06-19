@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
@@ -29,6 +30,8 @@ from app.repositories.run import RunRepo
 from app.schemas.run import RunEnqueueResponse, RunRead, RunResumeRequest
 from app.security import decode_access_token
 from app.services import run as run_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
 
@@ -148,6 +151,20 @@ async def stream_run_events(
     except (ValueError, TypeError):
         after_step = -1
 
+    def _done_frame(done_status: str) -> str:
+        return f"data: {json.dumps({'type': 'done', 'status': done_status})}\n\n"
+
+    async def _current_status() -> str:
+        # Each check is its own short read — committing right after closes
+        # out the implicit transaction immediately instead of holding one
+        # open (idle-in-transaction) for the entire lifetime of a long SSE
+        # connection, which risks the connection being killed by a DB-side
+        # idle timeout and the generator dying silently without ever sending
+        # a terminal frame (the client would then hang on "running" forever).
+        current = await _run_repo.get(session, run_id)
+        await session.commit()
+        return current.status if current is not None else "unknown"
+
     async def _generate() -> AsyncIterator[str]:
         # 1. Replay persisted events from DB
         events = await _run_repo.list_events(session, run_id, after_step=after_step)
@@ -165,10 +182,14 @@ async def stream_run_events(
             yield f"id: {event.step_index}\ndata: {payload}\n\n"
 
         # 2. If already terminal, yield done frame and stop
-        current_run = await _run_repo.get(session, run_id)
-        if current_run is None or current_run.status in _TERMINAL_STATUSES:
-            done_status = current_run.status if current_run else "unknown"
-            yield f"data: {json.dumps({'type': 'done', 'status': done_status})}\n\n"
+        try:
+            status_now = await _current_status()
+        except Exception:
+            logger.exception("stream_run_events: failed to read run %s status", run_id)
+            yield _done_frame("unknown")
+            return
+        if status_now in _TERMINAL_STATUSES:
+            yield _done_frame(status_now)
             return
 
         # 3. Subscribe to Redis pub/sub for live events
@@ -176,23 +197,32 @@ async def stream_run_events(
         await pubsub.subscribe(f"run:{run_id}")
         try:
             while True:
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                if message is not None:
-                    raw = message.get("data", b"")
-                    if isinstance(raw, bytes):
-                        raw = raw.decode()
-                    try:
-                        parsed = json.loads(raw)
-                        step_index = parsed.get("step_index", 0)
-                        yield f"id: {step_index}\ndata: {raw}\n\n"
-                    except (ValueError, TypeError):
-                        pass
+                # Any failure here (DB or Redis) must still produce a
+                # terminal frame rather than silently killing the
+                # connection — an EventSource that never sees "done" never
+                # closes, and a client relying solely on it would be stuck
+                # showing "running" forever even after the run finished.
+                try:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if message is not None:
+                        raw = message.get("data", b"")
+                        if isinstance(raw, bytes):
+                            raw = raw.decode()
+                        try:
+                            parsed = json.loads(raw)
+                            step_index = parsed.get("step_index", 0)
+                            yield f"id: {step_index}\ndata: {raw}\n\n"
+                        except (ValueError, TypeError):
+                            pass
 
-                # Re-check terminal state after each message (or timeout)
-                live_run = await _run_repo.get(session, run_id)
-                if live_run is None or live_run.status in _TERMINAL_STATUSES:
-                    done_status = live_run.status if live_run else "unknown"
-                    yield f"data: {json.dumps({'type': 'done', 'status': done_status})}\n\n"
+                    # Re-check terminal state after each message (or timeout)
+                    status_now = await _current_status()
+                except Exception:
+                    logger.exception("stream_run_events: live poll failed for run %s", run_id)
+                    yield _done_frame("unknown")
+                    return
+                if status_now in _TERMINAL_STATUSES:
+                    yield _done_frame(status_now)
                     break
         finally:
             await pubsub.unsubscribe(f"run:{run_id}")

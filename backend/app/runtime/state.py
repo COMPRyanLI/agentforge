@@ -24,8 +24,18 @@ class RunState(TypedDict):
     error: str | None  # non-None means a handler caught an unrecoverable error
     # Per-loop-node iteration counters, keyed by node_id. Checkpointed like every
     # other field (plain overwrite semantics) — this is what lets a crash mid-loop
-    # resume at the correct iteration instead of restarting the loop.
+    # resume at the correct iteration instead of restarting the loop. Never exceeds
+    # the node's max_iterations — make_loop_handler only advances it when actually
+    # continuing into the loop body.
     loop_counters: dict[str, int]
+    # Per-loop-node continue/exit decision, keyed by node_id, written by
+    # make_loop_handler and read by GraphCompiler's conditional-edge route function.
+    # The route function only ever sees state *after* the handler ran, where a
+    # legitimate "just performed iteration N" visit and a later "max_iterations
+    # already reached" visit can show the identical loop_counters value — so the
+    # decision is precomputed here (where the pre-increment counter is visible)
+    # rather than re-derived ambiguously from the counter alone.
+    loop_continue: dict[str, bool]
 
 
 # Lives here (not handlers.py) so app.runtime.retry can depend on the type

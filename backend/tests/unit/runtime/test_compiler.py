@@ -67,6 +67,7 @@ async def test_compile_and_invoke_minimal(compiler: GraphCompiler) -> None:
         "step_index": 0,
         "error": None,
         "loop_counters": {},
+        "loop_continue": {},
     }
     result = await compiled.ainvoke(initial, {"configurable": {"thread_id": "t1"}})
     # output node looks for assistant message; there is none → output=None
@@ -104,6 +105,7 @@ async def test_compile_llm_graph_returns_output(
         "step_index": 0,
         "error": None,
         "loop_counters": {},
+        "loop_continue": {},
     }
     result = await c.ainvoke(state, {"configurable": {"thread_id": "t2"}})
     assert result["output"] == "Hello!"
@@ -253,6 +255,7 @@ async def test_condition_routes_true(
         "step_index": 0,
         "error": None,
         "loop_counters": {},
+        "loop_continue": {},
     }
     result = await compiled.ainvoke(state, {"configurable": {"thread_id": "tcond1"}})
     # condition is true (last_tool_result == 5) -> routes through the tool node,
@@ -275,6 +278,7 @@ async def test_condition_routes_false(mock_llm: LLMProvider, registry: ToolRegis
         "step_index": 0,
         "error": None,
         "loop_counters": {},
+        "loop_continue": {},
     }
     result = await compiled.ainvoke(state, {"configurable": {"thread_id": "tcond2"}})
     # last_tool_result is None -> "None == 5" is false -> routes straight to

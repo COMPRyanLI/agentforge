@@ -80,6 +80,7 @@ async def execute_graph(
             "step_index": 0,
             "error": None,
             "loop_counters": {},
+            "loop_continue": {},
         }
 
     async with asyncio.timeout(deadline):

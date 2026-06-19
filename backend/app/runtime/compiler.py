@@ -16,7 +16,6 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Hashable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -273,29 +272,11 @@ class GraphCompiler:
                 ) from exc
 
         if node_type == "loop":
-            max_iterations = int(data.get("max_iterations", 1))
-            emitter = self._event_emitter
-
+            # make_loop_handler already made the continue/exit decision (it's
+            # the only place that sees the counter's pre-increment value, see
+            # its docstring) and recorded it in loop_continue — just read it.
             async def _route_loop(state: RunState) -> str:
-                # count is incremented by make_loop_handler before this route
-                # function runs, so count == "how many times has the loop body
-                # been offered so far"; allowing through while count <= max_iterations
-                # (not <) makes exactly max_iterations body executions happen.
-                count = state["loop_counters"].get(node_id, 0)
-                if count > max_iterations:
-                    if emitter is not None:
-                        await emitter.emit(
-                            step_index=state["step_index"],
-                            node_id=node_id,
-                            event_type="retry",
-                            payload={
-                                "warning": "max_iterations reached, forcing exit",
-                                "max_iterations": max_iterations,
-                            },
-                            ts=datetime.now(UTC),
-                        )
-                    return "false"
-                return "true" if _eval_expr(state) else "false"
+                return "true" if state["loop_continue"].get(node_id, False) else "false"
 
             return _route_loop
 
@@ -414,7 +395,12 @@ class GraphCompiler:
             case "condition":
                 return make_condition_handler(node_id=node_id, event_emitter=emitter)
             case "loop":
-                return make_loop_handler(node_id=node_id, event_emitter=emitter)
+                return make_loop_handler(
+                    node_id=node_id,
+                    expr=str(data.get("expr") or ""),
+                    max_iterations=int(data.get("max_iterations", 1)),
+                    event_emitter=emitter,
+                )
             case "output":
                 return make_output_handler(node_id=node_id, event_emitter=emitter)
             case _:

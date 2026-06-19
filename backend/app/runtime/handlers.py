@@ -23,7 +23,8 @@ from langgraph.types import interrupt
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.llm.provider import LLMProvider
-from app.runtime.errors import AgentRuntimeError
+from app.runtime.errors import AgentRuntimeError, GraphCompilationError
+from app.runtime.expr import ExprEvaluationError, evaluate_condition, namespace_from_state
 from app.runtime.registry import ToolRegistry, invoke_tool_idempotent
 from app.runtime.retry import RetryPolicy, retry_async
 from app.runtime.state import Message, NodeHandler, RunState
@@ -340,31 +341,69 @@ def make_condition_handler(
 
 
 def make_loop_handler(
-    node_id: str = "loop",
+    node_id: str,
+    expr: str,
+    max_iterations: int,
     event_emitter: EventEmitter | None = None,
 ) -> NodeHandler:
-    """Loop node: increments this node's checkpointed iteration counter.
+    """Loop node: advances the checkpointed iteration counter and decides
+    whether to continue into the loop body or exit.
 
-    The actual continue-or-exit decision (data.expr AND counter < max_iterations)
-    is made by the conditional-edge routing function the GraphCompiler attaches
-    via add_conditional_edges (see app.runtime.expr / compiler.py), exactly like
-    make_condition_handler — this handler only advances the counter and emits
-    node_start/node_end events.
+    The decision is made here, not in a separate conditional-edge routing
+    function, because only this handler sees the counter's value *before*
+    this visit's own update. A routing function only sees the state *after*
+    the handler ran, where "just performed the Nth body execution" and "max
+    iterations was already reached, this visit only confirms exit" can both
+    show the identical persisted counter value — there'd be no way for a
+    route function to tell them apart. So the decision is computed here and
+    written to loop_continue for GraphCompiler's route function to read
+    directly, and loop_counters is only ever advanced when actually
+    continuing into the body — it never exceeds max_iterations.
 
-    loop_counters is plain RunState, checkpointed like every other field, so a
-    crash mid-loop resumes with the counter at its last-recorded value: LangGraph
-    re-enters this node fresh (no nondeterminism, no recomputation of "how many
-    iterations happened"), reads the checkpointed count, and continues from there.
+    Both loop_counters and loop_continue are plain RunState, checkpointed
+    like every other field, so a crash mid-loop resumes with the same
+    decision LangGraph would have made on first execution: re-enter this
+    node fresh, read the checkpointed counter, recompute deterministically.
     """
 
     async def _handler(state: RunState) -> dict[str, Any]:
         ts = datetime.now(UTC)
         step = state["step_index"]
         await _maybe_emit(event_emitter, step, node_id, "node_start", {}, ts)
-        new_count = state["loop_counters"].get(node_id, 0) + 1
-        await _maybe_emit(event_emitter, step, node_id, "node_end", {"iteration": new_count}, ts)
+
+        current = state["loop_counters"].get(node_id, 0)
+        capped = current >= max_iterations
+        if capped:
+            should_continue = False
+        else:
+            try:
+                should_continue = evaluate_condition(expr, namespace_from_state(state))
+            except ExprEvaluationError as exc:
+                raise GraphCompilationError(
+                    f"loop node '{node_id}' expr {expr!r} failed: {exc}"
+                ) from exc
+
+        new_count = current + 1 if should_continue else current
+        if capped:
+            await _maybe_emit(
+                event_emitter,
+                step,
+                node_id,
+                "node_end",
+                {
+                    "warning": "max_iterations reached, forcing exit",
+                    "max_iterations": max_iterations,
+                },
+                ts,
+            )
+        else:
+            await _maybe_emit(
+                event_emitter, step, node_id, "node_end", {"iteration": new_count}, ts
+            )
+
         return {
             "loop_counters": {**state["loop_counters"], node_id: new_count},
+            "loop_continue": {**state["loop_continue"], node_id: should_continue},
             "step_index": step + 1,
         }
 

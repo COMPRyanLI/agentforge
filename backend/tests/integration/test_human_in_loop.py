@@ -67,6 +67,7 @@ def _seed_state_with_pending_tool_call(run_id: str) -> RunState:
         "step_index": 0,
         "error": None,
         "loop_counters": {},
+        "loop_continue": {},
     }
 
 

@@ -60,6 +60,7 @@ def _initial_state() -> RunState:
         "step_index": 0,
         "error": None,
         "loop_counters": {},
+        "loop_continue": {},
     }
 
 
@@ -75,7 +76,40 @@ async def test_loop_runs_exactly_max_iterations_then_exits(
 
     assert mock_llm.chat.call_count == 3  # type: ignore[attr-defined]
     assert result["output"] == "ok"
-    assert result["loop_counters"]["loop"] == 4  # one extra increment before forced exit
+    # Counter never exceeds max_iterations: the forced-exit visit confirms
+    # exit without advancing the counter past the cap.
+    assert result["loop_counters"]["loop"] == 3
+
+
+@pytest.mark.parametrize("max_iterations", [1, 3, 5])
+async def test_loop_counter_and_events_never_exceed_max_iterations(
+    max_iterations: int, mock_llm: LLMProvider, registry: ToolRegistry
+) -> None:
+    """expr is always true, so only the max_iterations cap bounds the loop.
+
+    Asserts the EXACT body-execution count for each max_iterations (not just
+    that a forced-exit warning eventually appears), and that no node_end
+    event for the loop node ever reports an iteration number greater than
+    max_iterations.
+    """
+    emitter = AsyncMock()
+    c = GraphCompiler(mock_llm, registry, dummy_session_factory, event_emitter=emitter)
+    compile_result = c.compile(_loop_graph(max_iterations=max_iterations))
+
+    result = await compile_result.graph.ainvoke(
+        _initial_state(), {"configurable": {"thread_id": f"loop-cap-{max_iterations}"}}
+    )
+
+    assert mock_llm.chat.call_count == max_iterations  # type: ignore[attr-defined]
+    assert result["loop_counters"]["loop"] == max_iterations
+
+    iteration_numbers = [
+        call.kwargs["payload"]["iteration"]
+        for call in emitter.emit.call_args_list
+        if call.kwargs.get("node_id") == "loop" and "iteration" in call.kwargs["payload"]
+    ]
+    assert iteration_numbers == list(range(1, max_iterations + 1))
+    assert all(n <= max_iterations for n in iteration_numbers)
 
 
 async def test_loop_forced_exit_ignores_always_true_expr(

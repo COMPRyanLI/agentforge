@@ -2,6 +2,8 @@ import { useCallback, useRef, useState } from "react";
 import type { RunEvent } from "../api/runs";
 import { getRun, startRun, streamRunEvents } from "../api/runs";
 
+const TERMINAL_STATUSES = new Set(["succeeded", "failed", "interrupted"]);
+
 const EVENT_ICONS: Record<string, string> = {
   node_start: "▶",
   node_end: "■",
@@ -31,22 +33,71 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
   const [input, setInput] = useState("");
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [output, setOutput] = useState<string | null>(null);
+  const [errorText, setErrorText] = useState<string | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [running, setRunning] = useState(false);
   const stopRef = useRef<(() => void) | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
+  // Guards against finalizing twice when both the SSE "done" event and the
+  // [out] node_end fallback (see finalize's caller below) fire for the same
+  // run — whichever observes the terminal status first wins.
+  const finalizedRef = useRef(false);
 
   const appendLog = useCallback((entry: LogEntry) => {
     setLogs((prev) => [...prev, entry]);
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
+  // Single source of truth for "the run is over": always re-fetches
+  // GET /runs/{id} for the authoritative status and the FULL output_json —
+  // never trusts the streamed content_preview/output_preview fields, which
+  // are intentionally truncated. Called both from the SSE "done" event and,
+  // as a fallback in case that event is ever delayed or dropped, as soon as
+  // the output node's node_end is observed streaming.
+  const finalize = useCallback(
+    async (runId: string, optimisticStatus?: string) => {
+      if (finalizedRef.current) return;
+      try {
+        const finalRun = await getRun(runId, token);
+        if (!TERMINAL_STATUSES.has(finalRun.status)) {
+          // Not committed yet (race between the node finishing and the run
+          // row's status update) — the SSE "done" event, once it arrives,
+          // will retry this via the same finalize() call.
+          return;
+        }
+        finalizedRef.current = true;
+        stopRef.current?.();
+        stopRef.current = null;
+        setRunning(false);
+        setRunStatus(finalRun.status);
+        setOutput(finalRun.status === "succeeded" ? (finalRun.output_json?.output ?? null) : null);
+        setErrorText(
+          finalRun.status === "failed" ? finalRun.error_json?.error ?? "Run failed" : null
+        );
+      } catch {
+        if (optimisticStatus !== undefined) {
+          // The "done" event already told us the run is over even though
+          // the follow-up fetch for the full output failed — still flip out
+          // of "Running…" rather than hanging on a network blip.
+          finalizedRef.current = true;
+          stopRef.current?.();
+          stopRef.current = null;
+          setRunning(false);
+          setRunStatus(optimisticStatus);
+        }
+      }
+    },
+    [token]
+  );
+
   const handleRun = useCallback(async () => {
     if (!agentId || !input || !token || disabledReason) return;
     setLogs([]);
     setOutput(null);
+    setErrorText(null);
     setRunStatus("pending");
     setRunning(true);
+    finalizedRef.current = false;
 
     try {
       const { run_id } = await startRun(agentId, input, token);
@@ -67,18 +118,16 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
             text: `[${ev.node_id}] ${ev.event_type}${payloadStr}`,
             ts: new Date(ev.ts).toLocaleTimeString(),
           });
-        },
-        async (status) => {
-          setRunStatus(status);
-          setRunning(false);
-          if (status === "succeeded") {
-            try {
-              const finalRun = await getRun(run_id, token);
-              setOutput(finalRun.output_json?.output ?? null);
-            } catch {
-              // ignore
-            }
+          // The output node's node_end is the strongest "the run is
+          // effectively done" signal in the event stream itself — fetch the
+          // authoritative status/output now rather than waiting solely on
+          // the SSE "done" frame.
+          if (ev.event_type === "node_end" && "output_preview" in ev.payload) {
+            void finalize(run_id);
           }
+        },
+        (status) => {
+          void finalize(run_id, status);
         }
       );
     } catch (err) {
@@ -86,7 +135,7 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
       setRunStatus("failed");
       setRunning(false);
     }
-  }, [agentId, input, token, disabledReason, appendLog]);
+  }, [agentId, input, token, disabledReason, appendLog, finalize]);
 
   const handleStop = useCallback(() => {
     stopRef.current?.();
@@ -98,6 +147,7 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
     running: "#3b82f6",
     succeeded: "#22c55e",
     failed: "#ef4444",
+    interrupted: "#a855f7",
   };
 
   return (
@@ -190,7 +240,7 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
 
       {/* Log stream */}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
-        {logs.length === 0 && !output && (
+        {logs.length === 0 && !output && !errorText && (
           <div style={{ color: "#475569", fontSize: 12, paddingTop: 8 }}>
             Logs will stream here when you click Test.
           </div>
@@ -205,8 +255,10 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
         <div ref={logEndRef} />
       </div>
 
-      {/* Output */}
-      {output && (
+      {/* Result — always the FULL output_json from GET /runs/{id}, never the
+          streamed content_preview/output_preview fields, which are
+          intentionally truncated. */}
+      {(output || errorText) && (
         <div
           style={{
             padding: "10px 12px",
@@ -214,8 +266,18 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
             background: "#0b1520",
           }}
         >
-          <div style={{ color: "#22c55e", fontWeight: 700, marginBottom: 4 }}>Output</div>
-          <div style={{ color: "#e2e8f0", whiteSpace: "pre-wrap", fontSize: 13 }}>{output}</div>
+          <div
+            style={{
+              color: errorText ? "#ef4444" : "#22c55e",
+              fontWeight: 700,
+              marginBottom: 4,
+            }}
+          >
+            Result
+          </div>
+          <div style={{ color: "#e2e8f0", whiteSpace: "pre-wrap", fontSize: 13 }}>
+            {errorText ?? output}
+          </div>
         </div>
       )}
     </div>

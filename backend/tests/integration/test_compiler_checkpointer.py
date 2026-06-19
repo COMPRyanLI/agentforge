@@ -79,6 +79,7 @@ async def test_second_ainvoke_on_same_thread_does_not_recall_llm(
         "step_index": 0,
         "error": None,
         "loop_counters": {},
+        "loop_continue": {},
     }
 
     result = await compiled.ainvoke(initial, config)
