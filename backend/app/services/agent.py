@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent, AgentVersion
 from app.repositories.agent import AgentRepo
+from app.runtime.registry_builder import graph_references_db_backed_tool
 from app.schemas.agent import AgentCreate, AgentUpdate, AgentVersionCreate
 
 _repo = AgentRepo()
@@ -70,5 +71,12 @@ async def publish(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot publish an agent with no versions",
+        )
+    version = await _repo.get_version(session, agent.current_version_id)
+    assert version is not None  # current_version_id always points at an existing version
+    if graph_references_db_backed_tool(version.graph_json):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot publish an agent that references a non-builtin tool",
         )
     return await _repo.publish(session, agent)

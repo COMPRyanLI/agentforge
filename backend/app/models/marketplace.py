@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, UUIDPrimaryKey
@@ -11,6 +11,7 @@ from app.models.base import Base, UUIDPrimaryKey
 
 class Rating(UUIDPrimaryKey, Base):
     __tablename__ = "ratings"
+    __table_args__ = (UniqueConstraint("agent_id", "user_id", name="uq_ratings_agent_user"),)
 
     agent_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("agents.id", ondelete="CASCADE"), index=True

@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.tool import ToolRepo
-from app.runtime.builtins import register_builtins
+from app.runtime.builtins import BUILTIN_TOOL_NAMES, register_builtins
 from app.runtime.http_tool import make_http_tool
 from app.runtime.registry import ToolRegistry
 
@@ -39,6 +39,26 @@ def _extract_llm_tool_names(graph_json: dict[str, Any]) -> list[str]:
         if node.get("type") == "llm":
             names.extend(str(n) for n in (node.get("data") or {}).get("tools") or [])
     return names
+
+
+def graph_references_db_backed_tool(graph_json: dict[str, Any]) -> bool:
+    """True if any node references a Tool row scoped to a single owner.
+
+    A published agent's graph is cloned verbatim into the installer's
+    workspace (see app.services.marketplace.install / app.services.template),
+    so an owner-scoped reference would either fail to resolve for the
+    installer or — if names/ids collided — leak the publisher's tool config
+    (e.g. HTTP auth headers). Only builtin tool references (no owner, same
+    implementation for every caller) are safe to publish.
+    """
+    if extract_tool_ids(graph_json):
+        return True
+    for node in graph_json.get("nodes", []):
+        if node.get("type") == "tool":
+            raw_id = str((node.get("data") or {}).get("tool_id") or "")
+            if raw_id and raw_id not in BUILTIN_TOOL_NAMES:
+                return True
+    return any(name not in BUILTIN_TOOL_NAMES for name in _extract_llm_tool_names(graph_json))
 
 
 async def build_registry(

@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import close_engine
-from app.routers import agents, auth, health, runs, tools
+from app.routers import agents, auth, health, marketplace, runs, templates, tools
 from app.runtime.checkpointer import close_checkpointer
 from app.schemas.health import RootResponse
 
@@ -48,6 +48,8 @@ app.include_router(auth.router, prefix="/auth")
 app.include_router(agents.router, prefix="/agents")
 app.include_router(tools.router, prefix="/tools")
 app.include_router(runs.router, prefix="/runs")
+app.include_router(marketplace.router, prefix="/marketplace")
+app.include_router(templates.router, prefix="/templates")
 
 
 @app.get("/")

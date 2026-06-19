@@ -106,3 +106,8 @@ def register_builtins(registry: ToolRegistry) -> None:
     Call this before compiling any graph so builtins are always available.
     """
     registry.register(CALCULATOR_TOOL)
+
+
+# Names of tools that need no owner-scoped DB row — safe to reference from a
+# published agent's graph since every installer can resolve them identically.
+BUILTIN_TOOL_NAMES: frozenset[str] = frozenset({CALCULATOR_TOOL.name})

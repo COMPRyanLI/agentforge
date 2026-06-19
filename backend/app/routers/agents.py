@@ -20,8 +20,23 @@ from app.schemas.agent import (
 from app.schemas.run import RunCreate, RunEnqueueResponse, RunRead
 from app.services import agent as agent_service
 from app.services import run as run_service
+from app.services import template as template_service
 
 router = APIRouter(tags=["agents"])
+
+
+@router.post(
+    "/from-template/{template_id}",
+    response_model=AgentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_agent_from_template(
+    template_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> AgentRead:
+    agent = await template_service.create_agent_from_template(session, template_id, current_user.id)
+    return AgentRead.model_validate(agent)
 
 
 @router.post("", response_model=AgentRead, status_code=status.HTTP_201_CREATED)

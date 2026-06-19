@@ -113,3 +113,34 @@ async def test_publish_without_version_returns_400(
     agent_id = create.json()["id"]
     resp = await client.post(f"/agents/{agent_id}/publish", headers=auth_headers)
     assert resp.status_code == 400
+
+
+async def test_publish_with_db_backed_tool_node_returns_400(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    create = await client.post("/agents", json={"name": "Tool Agent"}, headers=auth_headers)
+    agent_id = create.json()["id"]
+
+    graph = {
+        "nodes": [
+            {"id": "in", "type": "input"},
+            {
+                "id": "t1",
+                "type": "tool",
+                "data": {"tool_id": "11111111-1111-1111-1111-111111111111"},
+            },
+            {"id": "out", "type": "output"},
+        ],
+        "edges": [
+            {"source": "in", "target": "t1"},
+            {"source": "t1", "target": "out"},
+        ],
+    }
+    await client.post(
+        f"/agents/{agent_id}/versions",
+        json={"graph_json": graph},
+        headers=auth_headers,
+    )
+
+    resp = await client.post(f"/agents/{agent_id}/publish", headers=auth_headers)
+    assert resp.status_code == 400
