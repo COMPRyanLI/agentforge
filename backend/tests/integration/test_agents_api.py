@@ -115,6 +115,54 @@ async def test_publish_without_version_returns_400(
     assert resp.status_code == 400
 
 
+async def test_get_current_version_returns_graph_json(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    create = await client.post("/agents", json={"name": "Versioned Agent"}, headers=auth_headers)
+    agent_id = create.json()["id"]
+
+    graph = {"nodes": [{"id": "in", "type": "input"}], "edges": []}
+    await client.post(
+        f"/agents/{agent_id}/versions",
+        json={"graph_json": graph},
+        headers=auth_headers,
+    )
+
+    resp = await client.get(f"/agents/{agent_id}/versions/current", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["graph_json"] == graph
+    assert body["version_number"] == 1
+
+
+async def test_get_current_version_without_a_version_returns_404(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    create = await client.post("/agents", json={"name": "Empty Agent"}, headers=auth_headers)
+    agent_id = create.json()["id"]
+
+    resp = await client.get(f"/agents/{agent_id}/versions/current", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_get_current_version_other_owner_returns_403(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    other_headers: dict[str, str],
+) -> None:
+    create = await client.post("/agents", json={"name": "Alice Agent"}, headers=auth_headers)
+    agent_id = create.json()["id"]
+    graph = {"nodes": [{"id": "in", "type": "input"}], "edges": []}
+    await client.post(
+        f"/agents/{agent_id}/versions",
+        json={"graph_json": graph},
+        headers=auth_headers,
+    )
+
+    resp = await client.get(f"/agents/{agent_id}/versions/current", headers=other_headers)
+    assert resp.status_code == 403
+
+
 async def test_publish_with_db_backed_tool_node_returns_400(
     client: AsyncClient, auth_headers: dict[str, str]
 ) -> None:

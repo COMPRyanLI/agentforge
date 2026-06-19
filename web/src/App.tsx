@@ -13,14 +13,17 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
-import { createAgent, createVersion } from "./api/agents";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { BrowserRouter, Link, Route, Routes, useLocation } from "react-router-dom";
+import { createAgent, createVersion, getCurrentVersion, publishAgent } from "./api/agents";
 import { listTools, type ToolRead } from "./api/tools";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ConfigPanel, type ConfigurableNode } from "./components/ConfigPanel";
 import { NODE_DRAG_MIME, Palette } from "./components/Palette";
 import { RunPanel } from "./components/RunPanel";
 import { ToolBuilder } from "./components/ToolBuilder";
-import type { GraphJson, NodeType } from "./lib/graph";
+import { toGraphJson, type NodeType } from "./lib/graph";
+import { graphJsonToReactFlow } from "./lib/graphToFlow";
 import { validateGraph } from "./lib/validateGraph";
 import { ConditionNode } from "./nodes/ConditionNode";
 import { InputNode } from "./nodes/InputNode";
@@ -28,6 +31,14 @@ import { LLMNode } from "./nodes/LLMNode";
 import { LoopNode } from "./nodes/LoopNode";
 import { OutputNode } from "./nodes/OutputNode";
 import { ToolNode } from "./nodes/ToolNode";
+import { MarketplaceDetail } from "./pages/MarketplaceDetail";
+import { MarketplaceList } from "./pages/MarketplaceList";
+import { TemplateGallery } from "./pages/TemplateGallery";
+
+export interface OpenAgentState {
+  agentId: string;
+  agentName: string;
+}
 
 const nodeTypes: NodeTypes = {
   input: InputNode,
@@ -53,25 +64,9 @@ const initialNodes: Node[] = [
   { id: "out", type: "output", position: { x: 540, y: 180 }, data: {} },
 ];
 
-function toGraphJson(nodes: Node[], edges: Edge[]): GraphJson {
-  return {
-    nodes: nodes.map((n) => ({
-      id: n.id,
-      type: n.type as NodeType,
-      data: n.data as Record<string, unknown>,
-    })),
-    edges: edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      ...(e.sourceHandle === "true" || e.sourceHandle === "false"
-        ? { condition: e.sourceHandle }
-        : {}),
-    })),
-  };
-}
-
 function Canvas() {
-  const [token, setToken] = useState("");
+  const { token } = useAuth();
+  const location = useLocation();
   const [agentName, setAgentName] = useState("My Agent");
   const [agentId, setAgentId] = useState("");
   const [tools, setTools] = useState<ToolRead[]>([]);
@@ -96,6 +91,34 @@ function Canvas() {
       .then(setTools)
       .catch(() => setTools([]));
   }, [token]);
+
+  // Arriving from an install or template-clone: the new agent already has a
+  // saved version — fetch and apply it so the canvas shows the real graph
+  // instead of the default starter skeleton. loadedAgentIdRef avoids
+  // refetching on every token keystroke while still allowing a retry (via
+  // the catch resetting it) if the fetch fails.
+  const loadedAgentIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const opened = location.state as OpenAgentState | null;
+    if (!opened?.agentId || !token) return;
+    if (loadedAgentIdRef.current === opened.agentId) return;
+    loadedAgentIdRef.current = opened.agentId;
+    setAgentId(opened.agentId);
+    setAgentName(opened.agentName);
+    getCurrentVersion(opened.agentId, token)
+      .then((version) => {
+        const { nodes: loadedNodes, edges: loadedEdges } = graphJsonToReactFlow(
+          version.graph_json
+        );
+        setNodes(loadedNodes);
+        setEdges(loadedEdges);
+        setDirty(false);
+      })
+      .catch((err) => {
+        loadedAgentIdRef.current = null;
+        setSaveErrors([String(err)]);
+      });
+  }, [location.state, token, setNodes, setEdges]);
 
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
@@ -177,6 +200,15 @@ function Canvas() {
     }
   }, [nodes, edges, agentId, token]);
 
+  const handlePublish = useCallback(async () => {
+    try {
+      await publishAgent(agentId, token);
+      setSaveErrors([]);
+    } catch (err) {
+      setSaveErrors([String(err)]);
+    }
+  }, [agentId, token]);
+
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
   const configurableNode: ConfigurableNode | null = selectedNode
     ? {
@@ -193,7 +225,7 @@ function Canvas() {
       : null;
 
   return (
-    <div style={{ width: "100vw", height: "100vh", background: "#0b1020", display: "flex", flexDirection: "column" }}>
+    <div style={{ width: "100%", height: "100%", background: "#0b1020", display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
       <div
         style={{
@@ -209,13 +241,6 @@ function Canvas() {
         }}
       >
         <input
-          type="password"
-          placeholder="JWT token"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          style={topInputStyle}
-        />
-        <input
           placeholder="Agent name"
           value={agentName}
           onChange={(e) => setAgentName(e.target.value)}
@@ -229,6 +254,9 @@ function Canvas() {
         </div>
         <button onClick={handleSave} style={topButtonStyle} disabled={!agentId}>
           Save Graph
+        </button>
+        <button onClick={handlePublish} style={topButtonStyle} disabled={!agentId || dirty}>
+          Publish
         </button>
         <button onClick={() => setToolBuilderOpen(true)} style={topButtonStyle} disabled={!token}>
           + HTTP Tool
@@ -291,10 +319,69 @@ const topButtonStyle = {
   cursor: "pointer",
 };
 
-export default function App() {
+function NavBar() {
+  const { token, setToken } = useAuth();
+  const linkStyle: CSSProperties = { color: "#e2e8f0", textDecoration: "none", fontSize: 12 };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        padding: "8px 12px",
+        borderBottom: "1px solid #1e293b",
+        background: "#0b1020",
+        fontFamily: "system-ui, sans-serif",
+      }}
+    >
+      <Link to="/" style={{ ...linkStyle, fontWeight: 700 }}>
+        AgentForge
+      </Link>
+      <Link to="/" style={linkStyle}>
+        Builder
+      </Link>
+      <Link to="/marketplace" style={linkStyle}>
+        Marketplace
+      </Link>
+      <Link to="/templates" style={linkStyle}>
+        Templates
+      </Link>
+      <input
+        type="password"
+        placeholder="JWT token"
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
+        style={{ ...topInputStyle, marginLeft: "auto", width: 220 }}
+      />
+    </div>
+  );
+}
+
+function BuilderPage() {
   return (
     <ReactFlowProvider>
       <Canvas />
     </ReactFlowProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+          <NavBar />
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            <Routes>
+              <Route path="/" element={<BuilderPage />} />
+              <Route path="/marketplace" element={<MarketplaceList />} />
+              <Route path="/marketplace/:agentId" element={<MarketplaceDetail />} />
+              <Route path="/templates" element={<TemplateGallery />} />
+            </Routes>
+          </div>
+        </div>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }

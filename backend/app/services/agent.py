@@ -61,6 +61,21 @@ async def create_version(
     return version
 
 
+async def get_current_version(
+    session: AsyncSession,
+    agent_id: uuid.UUID,
+    owner_id: uuid.UUID,
+) -> AgentVersion:
+    agent = await get_or_404(session, agent_id, owner_id)
+    if agent.current_version_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Agent has no saved version"
+        )
+    version = await _repo.get_version(session, agent.current_version_id)
+    assert version is not None  # current_version_id always points at an existing version
+    return version
+
+
 async def publish(
     session: AsyncSession,
     agent_id: uuid.UUID,

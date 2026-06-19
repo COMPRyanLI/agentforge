@@ -64,6 +64,17 @@ export async function getAgent(agentId: string, token: string): Promise<AgentRea
   return resp.json() as Promise<AgentRead>;
 }
 
+export async function getCurrentVersion(
+  agentId: string,
+  token: string
+): Promise<AgentVersionRead> {
+  const resp = await fetch(`${API_BASE}/agents/${agentId}/versions/current`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  await checkOk(resp, "getCurrentVersion");
+  return resp.json() as Promise<AgentVersionRead>;
+}
+
 export async function createVersion(
   agentId: string,
   graphJson: GraphJson,
@@ -76,4 +87,13 @@ export async function createVersion(
   });
   await checkOk(resp, "createVersion");
   return resp.json() as Promise<AgentVersionRead>;
+}
+
+export async function publishAgent(agentId: string, token: string): Promise<AgentRead> {
+  const resp = await fetch(`${API_BASE}/agents/${agentId}/publish`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  await checkOk(resp, "publishAgent");
+  return resp.json() as Promise<AgentRead>;
 }

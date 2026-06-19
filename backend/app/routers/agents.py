@@ -94,6 +94,16 @@ async def create_version(
     return AgentVersionRead.model_validate(version)
 
 
+@router.get("/{agent_id}/versions/current", response_model=AgentVersionRead)
+async def get_current_version(
+    agent_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> AgentVersionRead:
+    version = await agent_service.get_current_version(session, agent_id, current_user.id)
+    return AgentVersionRead.model_validate(version)
+
+
 @router.post("/{agent_id}/publish", response_model=AgentRead)
 async def publish_agent(
     agent_id: uuid.UUID,

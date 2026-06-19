@@ -5,6 +5,8 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.template import Template
+from app.repositories.template import TemplateRepo
+from app.scripts.seed_templates import TEMPLATES, _apply_templates
 
 SIMPLE_GRAPH = {
     "nodes": [
@@ -65,6 +67,18 @@ async def test_create_agent_from_template(
     versions = await client.get(f"/agents/{agent['id']}", headers=auth_headers)
     assert versions.status_code == 200
 
+    # The clone's actual persisted graph must be the template's full graph,
+    # not a default skeleton — this is the regression guard for the "opening
+    # a template shows the default in->llm->out skeleton" bug (Case A would
+    # be the backend storing a default/empty graph instead of this).
+    current_version = await client.get(
+        f"/agents/{agent['id']}/versions/current", headers=auth_headers
+    )
+    assert current_version.status_code == 200
+    body = current_version.json()
+    assert body["version_number"] == 1
+    assert body["graph_json"] == seeded_template.graph_json
+
 
 async def test_create_agent_from_missing_template_returns_404(
     client: AsyncClient, auth_headers: dict[str, str]
@@ -74,3 +88,43 @@ async def test_create_agent_from_missing_template_returns_404(
         headers=auth_headers,
     )
     assert resp.status_code == 404
+
+
+async def test_apply_templates_upserts_and_prunes(db_session: AsyncSession) -> None:
+    """Re-running the seed against rows with old data/old names must converge
+    the table to exactly TEMPLATES: matching names get their fields updated in
+    place, and any name no longer defined (a rename or removal) is deleted."""
+    repo = TemplateRepo()
+
+    stale = Template(
+        name="Some Old Template",
+        description="no longer defined",
+        category="legacy",
+        graph_json=SIMPLE_GRAPH,
+    )
+    outdated = Template(
+        name=TEMPLATES[0]["name"],
+        description="stale description",
+        category="stale-category",
+        graph_json=SIMPLE_GRAPH,
+    )
+    db_session.add_all([stale, outdated])
+    await db_session.flush()
+
+    await _apply_templates(db_session)
+    await db_session.flush()
+
+    rows = await repo.list_all(db_session)
+    names = {row.name for row in rows}
+    assert names == {spec["name"] for spec in TEMPLATES}
+
+    updated = await repo.get_by_name(db_session, TEMPLATES[0]["name"])
+    assert updated is not None
+    assert updated.description == TEMPLATES[0]["description"]
+    assert updated.graph_json == TEMPLATES[0]["graph_json"]
+
+    # Re-applying again (idempotent) must not change the row count.
+    await _apply_templates(db_session)
+    await db_session.flush()
+    rows_again = await repo.list_all(db_session)
+    assert len(rows_again) == len(TEMPLATES)
