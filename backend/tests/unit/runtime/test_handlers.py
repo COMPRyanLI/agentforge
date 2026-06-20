@@ -446,6 +446,71 @@ async def test_tool_handler_emits_events_when_emitter_provided(
     assert "node_end" in called_types
 
 
+async def test_llm_handler_emits_usage_fields_in_llm_result(
+    fake_tool_call_repo: FakeToolCallRepo,
+) -> None:
+    from unittest.mock import AsyncMock as _AM
+
+    mock_llm: LLMProvider = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = LLMResponse(  # type: ignore[attr-defined]
+        content="ok",
+        tool_calls=[],
+        prompt_tokens=10,
+        completion_tokens=20,
+        total_duration_ms=123.4,
+    )
+
+    emitter = _AM()
+    handler = make_llm_handler(
+        llm=mock_llm,
+        registry=make_registry(),
+        tool_names=[],
+        system_prompt="",
+        session_factory=dummy_session_factory,
+        node_id="llm1",
+        event_emitter=emitter,
+    )
+    await handler(make_state())
+
+    llm_result_calls = [
+        c for c in emitter.emit.call_args_list if c.kwargs["event_type"] == "llm_result"
+    ]
+    assert len(llm_result_calls) == 1
+    payload = llm_result_calls[0].kwargs["payload"]
+    assert payload["prompt_tokens"] == 10
+    assert payload["completion_tokens"] == 20
+    assert payload["total_duration_ms"] == 123.4
+
+
+async def test_llm_handler_emits_none_usage_fields_when_provider_omits_them(
+    fake_tool_call_repo: FakeToolCallRepo,
+) -> None:
+    from unittest.mock import AsyncMock as _AM
+
+    mock_llm: LLMProvider = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = LLMResponse(content="ok", tool_calls=[])  # type: ignore[attr-defined]
+
+    emitter = _AM()
+    handler = make_llm_handler(
+        llm=mock_llm,
+        registry=make_registry(),
+        tool_names=[],
+        system_prompt="",
+        session_factory=dummy_session_factory,
+        node_id="llm1",
+        event_emitter=emitter,
+    )
+    await handler(make_state())
+
+    llm_result_calls = [
+        c for c in emitter.emit.call_args_list if c.kwargs["event_type"] == "llm_result"
+    ]
+    payload = llm_result_calls[0].kwargs["payload"]
+    assert payload["prompt_tokens"] is None
+    assert payload["completion_tokens"] is None
+    assert payload["total_duration_ms"] is None
+
+
 async def test_output_handler_emits_events_when_emitter_provided() -> None:
     from unittest.mock import AsyncMock as _AM
 

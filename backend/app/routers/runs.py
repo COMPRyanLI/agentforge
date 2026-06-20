@@ -27,7 +27,7 @@ from app.dependencies import (
 from app.models.user import User
 from app.repositories.agent import AgentRepo
 from app.repositories.run import RunRepo
-from app.schemas.run import RunEnqueueResponse, RunRead, RunResumeRequest
+from app.schemas.run import RunEnqueueResponse, RunEventRead, RunRead, RunResumeRequest
 from app.security import decode_access_token
 from app.services import run as run_service
 
@@ -93,6 +93,25 @@ async def replay_run(
     response = await run_service.replay(session, run_id, current_user.id, from_step, checkpointer)
     await arq_pool.enqueue_job("execute_run", str(response.run_id), resume=True)
     return response
+
+
+@router.get("/{run_id}/timeline", response_model=list[RunEventRead])
+async def get_run_timeline(
+    run_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[RunEventRead]:
+    """Plain REST counterpart to the SSE /events stream: the full, ordered
+    event history of a run, for rendering a static timeline view (no live
+    connection needed once the run has finished)."""
+    run = await _run_repo.get(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    agent = await _agent_repo.get(session, run.agent_id)
+    if agent is None or agent.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your run")
+    events = await _run_repo.list_events(session, run_id)
+    return [RunEventRead.model_validate(e) for e in events]
 
 
 @router.get("/{run_id}/events")

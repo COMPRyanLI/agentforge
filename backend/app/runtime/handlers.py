@@ -152,7 +152,12 @@ def make_llm_handler(
                     step,
                     node_id,
                     "llm_result",
-                    {"content_preview": (response.content or "")[:200]},
+                    {
+                        "content_preview": (response.content or "")[:200],
+                        "prompt_tokens": response.prompt_tokens,
+                        "completion_tokens": response.completion_tokens,
+                        "total_duration_ms": response.total_duration_ms,
+                    },
                     ts,
                 )
                 text_msg: Message = {"role": "assistant", "content": response.content}

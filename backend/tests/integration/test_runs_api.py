@@ -8,6 +8,7 @@ tests (test_execute_run.py).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -312,4 +313,129 @@ async def test_list_runs_other_user_returns_403(
     agent_id: str,
 ) -> None:
     resp = await client.get(f"/agents/{agent_id}/runs", headers=other_headers)
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /runs/{id}/timeline
+# ---------------------------------------------------------------------------
+
+
+async def test_get_run_timeline_returns_ordered_events(
+    client: AsyncClient,
+    db_session: Any,
+    auth_headers: dict[str, str],
+    agent_id: str,
+) -> None:
+    agent_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    version_id = agent_resp.json()["current_version_id"]
+    run_id = await _insert_succeeded_run(db_session, agent_id, version_id)
+
+    repo = RunRepo()
+    for i in range(3):
+        await repo.create_event(
+            db_session,
+            run_id=uuid.UUID(run_id),
+            step_index=i,
+            node_id=f"node{i}",
+            event_type="node_start",
+            payload_json={"step": i},
+            ts=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+    await db_session.commit()
+
+    resp = await client.get(f"/runs/{run_id}/timeline", headers=auth_headers)
+    assert resp.status_code == 200
+    events = resp.json()
+    assert [e["step_index"] for e in events] == [0, 1, 2]
+    assert events[0]["node_id"] == "node0"
+
+
+async def test_get_run_timeline_empty_when_no_events(
+    client: AsyncClient,
+    db_session: Any,
+    auth_headers: dict[str, str],
+    agent_id: str,
+) -> None:
+    agent_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    version_id = agent_resp.json()["current_version_id"]
+    run_id = await _insert_succeeded_run(db_session, agent_id, version_id)
+
+    resp = await client.get(f"/runs/{run_id}/timeline", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_get_run_timeline_nonexistent_run_returns_404(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    resp = await client.get(
+        "/runs/00000000-0000-0000-0000-000000000099/timeline", headers=auth_headers
+    )
+    assert resp.status_code == 404
+
+
+async def test_get_agent_run_stats_zero_runs(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    create = await client.post("/agents", json={"name": "Fresh Stats"}, headers=auth_headers)
+    aid = create.json()["id"]
+
+    resp = await client.get(f"/agents/{aid}/runs/stats", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_runs"] == 0
+    assert data["success_rate"] is None
+    assert data["p95_latency_ms"] is None
+
+
+async def test_get_agent_run_stats_with_succeeded_runs(
+    client: AsyncClient,
+    db_session: Any,
+    auth_headers: dict[str, str],
+    agent_id: str,
+) -> None:
+    agent_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    version_id = agent_resp.json()["current_version_id"]
+    await _insert_succeeded_run(db_session, agent_id, version_id)
+    await _insert_succeeded_run(db_session, agent_id, version_id)
+
+    resp = await client.get(f"/agents/{agent_id}/runs/stats", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_runs"] == 2
+    assert data["success_rate"] == 1.0
+
+
+async def test_get_agent_run_stats_other_user_returns_403(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    other_headers: dict[str, str],
+    agent_id: str,
+) -> None:
+    resp = await client.get(f"/agents/{agent_id}/runs/stats", headers=other_headers)
+    assert resp.status_code == 403
+
+
+async def test_get_agent_run_stats_nonexistent_agent_returns_404(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    resp = await client.get(
+        "/agents/00000000-0000-0000-0000-000000000099/runs/stats", headers=auth_headers
+    )
+    assert resp.status_code == 404
+
+
+async def test_get_run_timeline_other_user_returns_403(
+    client: AsyncClient,
+    db_session: Any,
+    auth_headers: dict[str, str],
+    other_headers: dict[str, str],
+    agent_id: str,
+) -> None:
+    agent_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    version_id = agent_resp.json()["current_version_id"]
+    run_id = await _insert_succeeded_run(db_session, agent_id, version_id)
+
+    resp = await client.get(f"/runs/{run_id}/timeline", headers=other_headers)
     assert resp.status_code == 403

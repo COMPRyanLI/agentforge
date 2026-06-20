@@ -56,3 +56,17 @@ class RunEventRead(BaseModel):
     event_type: str
     payload_json: dict[str, Any]  # justified: event payload is open-ended
     ts: datetime
+
+
+class AgentRunStats(BaseModel):
+    """Per-agent run metrics. See RunRepo.get_agent_stats for the exact
+    status-filtering, p95, and token-averaging semantics these fields follow.
+    """
+
+    total_runs: int
+    in_progress_count: int
+    success_rate: float | None
+    p95_latency_ms: float | None
+    avg_prompt_tokens: float | None
+    avg_completion_tokens: float | None
+    avg_steps_per_run: float | None

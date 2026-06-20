@@ -21,7 +21,7 @@ from app.runtime.compiler import GraphCompiler
 from app.runtime.errors import AgentRuntimeError
 from app.runtime.executor import execute_graph
 from app.runtime.registry_builder import build_registry, extract_tool_ids
-from app.schemas.run import RunCreate, RunEnqueueResponse, RunRead
+from app.schemas.run import AgentRunStats, RunCreate, RunEnqueueResponse, RunRead
 
 logger = logging.getLogger(__name__)
 
@@ -326,3 +326,26 @@ async def list_by_agent(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your agent")
     runs = await _run_repo.list_by_agent(session, agent_id)
     return [RunRead.model_validate(r) for r in runs]
+
+
+async def get_agent_stats(
+    session: AsyncSession,
+    agent_id: uuid.UUID,
+    owner_id: uuid.UUID,
+) -> AgentRunStats:
+    """Aggregate run metrics for an agent, verifying ownership."""
+    agent = await _agent_repo.get(session, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if agent.owner_id != owner_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your agent")
+    row = await _run_repo.get_agent_stats(session, agent_id)
+    return AgentRunStats(
+        total_runs=row.total_runs,
+        in_progress_count=row.in_progress_count,
+        success_rate=row.success_rate,
+        p95_latency_ms=row.p95_latency_ms,
+        avg_prompt_tokens=row.avg_prompt_tokens,
+        avg_completion_tokens=row.avg_completion_tokens,
+        avg_steps_per_run=row.avg_steps_per_run,
+    )

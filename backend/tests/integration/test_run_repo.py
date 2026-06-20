@@ -117,3 +117,133 @@ async def test_list_by_agent_empty_when_no_runs(db_session: AsyncSession) -> Non
     fake_agent_id = uuid.uuid4()
     runs = await repo.list_by_agent(db_session, fake_agent_id)
     assert runs == []
+
+
+# ---------------------------------------------------------------------------
+# get_agent_stats
+# ---------------------------------------------------------------------------
+
+
+async def _set_terminal(
+    repo: RunRepo,
+    session: AsyncSession,
+    run: Run,
+    status: str,
+    started_at: datetime,
+    ended_at: datetime,
+) -> None:
+    await repo.update_status(session, run, status, started_at=started_at, ended_at=ended_at)
+
+
+async def test_get_agent_stats_zero_runs_returns_nulls(db_session: AsyncSession) -> None:
+    repo = RunRepo()
+    fake_agent_id = uuid.uuid4()
+    stats = await repo.get_agent_stats(db_session, fake_agent_id)
+    assert stats.total_runs == 0
+    assert stats.in_progress_count == 0
+    assert stats.success_rate is None
+    assert stats.p95_latency_ms is None
+    assert stats.avg_prompt_tokens is None
+    assert stats.avg_completion_tokens is None
+    assert stats.avg_steps_per_run is None
+
+
+async def test_get_agent_stats_excludes_interrupted_and_running(db_session: AsyncSession) -> None:
+    repo = RunRepo()
+    run1 = await _make_run(db_session)
+    await _set_terminal(repo, db_session, run1, "succeeded", FIXED_DT, FIXED_DT.replace(second=10))
+
+    run2 = Run(
+        agent_id=run1.agent_id,
+        agent_version_id=run1.agent_version_id,
+        thread_id=str(uuid.uuid4()),
+        status="running",
+        input_json={},
+    )
+    db_session.add(run2)
+    await db_session.flush()
+
+    run3 = Run(
+        agent_id=run1.agent_id,
+        agent_version_id=run1.agent_version_id,
+        thread_id=str(uuid.uuid4()),
+        status="interrupted",
+        input_json={},
+        awaiting_approval=True,
+    )
+    db_session.add(run3)
+    await db_session.flush()
+    await db_session.commit()
+
+    stats = await repo.get_agent_stats(db_session, run1.agent_id)
+    assert stats.total_runs == 3
+    assert stats.in_progress_count == 2
+    # Only run1 (succeeded) counts toward success_rate / p95 — interrupted and
+    # running are excluded entirely, not coerced into either bucket.
+    assert stats.success_rate == 1.0
+    assert stats.p95_latency_ms == 10_000.0
+
+
+async def test_get_agent_stats_p95_single_run_equals_its_own_duration(
+    db_session: AsyncSession,
+) -> None:
+    repo = RunRepo()
+    run = await _make_run(db_session)
+    await _set_terminal(repo, db_session, run, "succeeded", FIXED_DT, FIXED_DT.replace(second=5))
+    await db_session.commit()
+
+    stats = await repo.get_agent_stats(db_session, run.agent_id)
+    assert stats.p95_latency_ms == 5_000.0
+
+
+async def test_get_agent_stats_averages_only_over_events_with_token_data(
+    db_session: AsyncSession,
+) -> None:
+    repo = RunRepo()
+    run_with_tokens = await _make_run(db_session)
+    await _set_terminal(
+        repo, db_session, run_with_tokens, "succeeded", FIXED_DT, FIXED_DT.replace(second=1)
+    )
+    await repo.create_event(
+        db_session,
+        run_id=run_with_tokens.id,
+        step_index=0,
+        node_id="llm1",
+        event_type="llm_result",
+        payload_json={"prompt_tokens": 10, "completion_tokens": 20},
+        ts=FIXED_DT,
+    )
+
+    run_without_tokens = Run(
+        agent_id=run_with_tokens.agent_id,
+        agent_version_id=run_with_tokens.agent_version_id,
+        thread_id=str(uuid.uuid4()),
+        status="failed",
+        input_json={},
+    )
+    db_session.add(run_without_tokens)
+    await db_session.flush()
+    await repo.update_status(
+        db_session,
+        run_without_tokens,
+        "failed",
+        started_at=FIXED_DT,
+        ended_at=FIXED_DT.replace(second=2),
+    )
+    await repo.create_event(
+        db_session,
+        run_id=run_without_tokens.id,
+        step_index=0,
+        node_id="llm1",
+        event_type="llm_result",
+        payload_json={"prompt_tokens": None, "completion_tokens": None},
+        ts=FIXED_DT,
+    )
+    await db_session.commit()
+
+    stats = await repo.get_agent_stats(db_session, run_with_tokens.agent_id)
+    # The average is taken only over the one event that actually carries
+    # token counts — the run with no token data must not pull it toward 0.
+    assert stats.avg_prompt_tokens == 10.0
+    assert stats.avg_completion_tokens == 20.0
+    assert stats.avg_steps_per_run == 1.0

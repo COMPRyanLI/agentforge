@@ -17,7 +17,7 @@ from app.schemas.agent import (
     AgentVersionCreate,
     AgentVersionRead,
 )
-from app.schemas.run import RunCreate, RunEnqueueResponse, RunRead
+from app.schemas.run import AgentRunStats, RunCreate, RunEnqueueResponse, RunRead
 from app.services import agent as agent_service
 from app.services import run as run_service
 from app.services import template as template_service
@@ -138,3 +138,12 @@ async def list_agent_runs(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[RunRead]:
     return await run_service.list_by_agent(session, agent_id, current_user.id)
+
+
+@router.get("/{agent_id}/runs/stats", response_model=AgentRunStats)
+async def get_agent_run_stats(
+    agent_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> AgentRunStats:
+    return await run_service.get_agent_stats(session, agent_id, current_user.id)

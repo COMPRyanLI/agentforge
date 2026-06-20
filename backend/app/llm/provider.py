@@ -27,6 +27,11 @@ class ToolCall:
 class LLMResponse:
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    # Usage/latency are recorded data for observability only — never used in
+    # control flow — and are Optional because the Ollama client may omit them.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_duration_ms: float | None = None
 
 
 class LLMProvider(Protocol):
@@ -50,4 +55,13 @@ class OllamaProvider:
         calls: list[ToolCall] = []
         for tc in msg.tool_calls or []:
             calls.append(ToolCall(name=tc.function.name, arguments=dict(tc.function.arguments)))
-        return LLMResponse(content=msg.content, tool_calls=calls)
+        total_duration_ms = (
+            resp.total_duration / 1_000_000 if resp.total_duration is not None else None
+        )
+        return LLMResponse(
+            content=msg.content,
+            tool_calls=calls,
+            prompt_tokens=resp.prompt_eval_count,
+            completion_tokens=resp.eval_count,
+            total_duration_ms=total_duration_ms,
+        )
