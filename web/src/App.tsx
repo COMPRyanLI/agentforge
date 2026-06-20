@@ -37,6 +37,7 @@ import { ToolNode } from "./nodes/ToolNode";
 import { Login } from "./pages/Login";
 import { MarketplaceDetail } from "./pages/MarketplaceDetail";
 import { MarketplaceList } from "./pages/MarketplaceList";
+import { MyAgents } from "./pages/MyAgents";
 import { Register } from "./pages/Register";
 import { RunHistory } from "./pages/RunHistory";
 import { RunTimeline } from "./pages/RunTimeline";
@@ -438,6 +439,14 @@ export default function App() {
                 element={
                   <RequireAuth>
                     <BuilderPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/agents"
+                element={
+                  <RequireAuth>
+                    <MyAgents />
                   </RequireAuth>
                 }
               />

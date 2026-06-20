@@ -86,3 +86,11 @@ export async function publishAgent(agentId: string, token: string): Promise<Agen
   await checkOk(resp, "publishAgent");
   return resp.json() as Promise<AgentRead>;
 }
+
+export async function deleteAgent(agentId: string, token: string): Promise<void> {
+  const resp = await fetch(`${API_BASE}/agents/${agentId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  await checkOk(resp, "deleteAgent");
+}

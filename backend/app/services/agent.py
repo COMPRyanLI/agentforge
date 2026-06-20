@@ -95,3 +95,12 @@ async def publish(
             detail="Cannot publish an agent that references a non-builtin tool",
         )
     return await _repo.publish(session, agent)
+
+
+async def delete(
+    session: AsyncSession,
+    agent_id: uuid.UUID,
+    owner_id: uuid.UUID,
+) -> None:
+    agent = await get_or_404(session, agent_id, owner_id)
+    await _repo.delete(session, agent)

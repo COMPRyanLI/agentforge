@@ -82,3 +82,14 @@ class AgentRepo:
         await session.flush()
         await session.refresh(agent)
         return agent
+
+    async def delete(self, session: AsyncSession, agent: Agent) -> None:
+        # Agent.versions has cascade="all, delete-orphan", so the ORM deletes
+        # AgentVersion rows before the Agent row — but agents.current_version_id
+        # (a use_alter FK added after both tables exist, to break the create-order
+        # cycle) still points at one of them at that moment, violating the FK.
+        # Clearing it first removes that reference before the version rows go.
+        agent.current_version_id = None
+        await session.flush()
+        await session.delete(agent)
+        await session.flush()

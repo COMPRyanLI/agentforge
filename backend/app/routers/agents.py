@@ -79,6 +79,15 @@ async def update_agent(
     return AgentRead.model_validate(agent)
 
 
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(
+    agent_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    await agent_service.delete(session, agent_id, current_user.id)
+
+
 @router.post(
     "/{agent_id}/versions",
     response_model=AgentVersionRead,

@@ -192,3 +192,55 @@ async def test_publish_with_db_backed_tool_node_returns_400(
 
     resp = await client.post(f"/agents/{agent_id}/publish", headers=auth_headers)
     assert resp.status_code == 400
+
+
+async def test_delete_agent_removes_it(client: AsyncClient, auth_headers: dict[str, str]) -> None:
+    create = await client.post("/agents", json={"name": "Disposable Agent"}, headers=auth_headers)
+    agent_id = create.json()["id"]
+
+    resp = await client.delete(f"/agents/{agent_id}", headers=auth_headers)
+    assert resp.status_code == 204
+
+    get_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    assert get_resp.status_code == 404
+
+
+async def test_delete_agent_other_owner_returns_403(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    other_headers: dict[str, str],
+) -> None:
+    create = await client.post("/agents", json={"name": "Alice Agent"}, headers=auth_headers)
+    agent_id = create.json()["id"]
+
+    resp = await client.delete(f"/agents/{agent_id}", headers=other_headers)
+    assert resp.status_code == 403
+
+    # Confirm it wasn't actually deleted despite the rejected attempt.
+    get_resp = await client.get(f"/agents/{agent_id}", headers=auth_headers)
+    assert get_resp.status_code == 200
+
+
+async def test_delete_nonexistent_agent_returns_404(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    resp = await client.delete("/agents/00000000-0000-0000-0000-000000000099", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_delete_agent_with_versions_and_runs_cascades(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    """Deleting an agent that has versions and a published state must not
+    error — all FKs referencing agents.id are ON DELETE CASCADE."""
+    create = await client.post("/agents", json={"name": "Busy Agent"}, headers=auth_headers)
+    agent_id = create.json()["id"]
+
+    graph = {"nodes": [{"id": "in", "type": "input"}], "edges": []}
+    await client.post(
+        f"/agents/{agent_id}/versions", json={"graph_json": graph}, headers=auth_headers
+    )
+    await client.post(f"/agents/{agent_id}/publish", headers=auth_headers)
+
+    resp = await client.delete(f"/agents/{agent_id}", headers=auth_headers)
+    assert resp.status_code == 204
