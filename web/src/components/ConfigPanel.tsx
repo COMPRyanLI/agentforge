@@ -1,3 +1,4 @@
+import { SlidersHorizontal } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { ToolRead } from "../api/tools";
 
@@ -15,23 +16,37 @@ interface ConfigPanelProps {
 
 const fieldStyle: CSSProperties = {
   width: "100%",
-  background: "#1e293b",
-  border: "1px solid #334155",
+  background: "var(--af-bg-surface-raised)",
+  border: "1px solid var(--af-border)",
   borderRadius: 4,
   padding: "4px 8px",
-  color: "#e2e8f0",
+  color: "var(--af-text)",
   fontSize: 12,
+  fontFamily: "var(--af-font-sans)",
   boxSizing: "border-box",
   marginBottom: 8,
 };
 
-const labelStyle: CSSProperties = { color: "#64748b", fontSize: 11, marginBottom: 2 };
+const labelStyle: CSSProperties = { color: "var(--af-text-faint)", fontSize: 11, marginBottom: 2 };
 
 export function ConfigPanel({ node, tools, onChange }: ConfigPanelProps) {
   if (!node) {
     return (
       <div style={panelStyle}>
-        <div style={{ color: "#475569", fontSize: 12 }}>Select a node to configure it.</div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            textAlign: "center",
+            color: "var(--af-text-faint)",
+            paddingTop: 48,
+            gap: 8,
+          }}
+        >
+          <SlidersHorizontal size={20} strokeWidth={1.5} />
+          <div style={{ fontSize: 12 }}>Select a node to configure it.</div>
+        </div>
       </div>
     );
   }
@@ -40,8 +55,9 @@ export function ConfigPanel({ node, tools, onChange }: ConfigPanelProps) {
 
   return (
     <div style={panelStyle}>
-      <div style={{ fontWeight: 700, marginBottom: 8 }}>
-        {node.type} <span style={{ color: "#64748b", fontWeight: 400 }}>({node.id})</span>
+      <div style={{ fontWeight: 600, marginBottom: 8 }}>
+        {node.type}{" "}
+        <span style={{ color: "var(--af-text-faint)", fontWeight: 400 }}>({node.id})</span>
       </div>
 
       {node.type === "llm" && (
@@ -67,7 +83,7 @@ export function ConfigPanel({ node, tools, onChange }: ConfigPanelProps) {
               )
             }
           />
-          <div style={{ fontSize: 11, color: "#475569" }}>
+          <div style={{ fontSize: 11, color: "var(--af-text-faint)" }}>
             Known tools: {tools.map((t) => t.name).join(", ") || "(none yet)"}
           </div>
         </>
@@ -108,7 +124,7 @@ export function ConfigPanel({ node, tools, onChange }: ConfigPanelProps) {
             value={typeof node.data.expr === "string" ? node.data.expr : ""}
             onChange={(e) => set("expr", e.target.value)}
           />
-          <div style={{ fontSize: 11, color: "#475569", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: "var(--af-text-faint)", marginBottom: 8 }}>
             Available: output, last_tool_result (dict-key access OK), step_index
           </div>
         </>
@@ -128,7 +144,7 @@ export function ConfigPanel({ node, tools, onChange }: ConfigPanelProps) {
       )}
 
       {(node.type === "input" || node.type === "output") && (
-        <div style={{ fontSize: 12, color: "#64748b" }}>This node has no configuration.</div>
+        <div style={{ fontSize: 12, color: "var(--af-text-muted)" }}>This node has no configuration.</div>
       )}
     </div>
   );
@@ -137,10 +153,10 @@ export function ConfigPanel({ node, tools, onChange }: ConfigPanelProps) {
 const panelStyle: CSSProperties = {
   width: 280,
   padding: 12,
-  borderLeft: "1px solid #1e293b",
-  background: "#0f172a",
-  color: "#e2e8f0",
-  fontFamily: "system-ui, sans-serif",
+  borderLeft: "1px solid var(--af-border)",
+  background: "var(--af-bg-surface)",
+  color: "var(--af-text)",
+  fontFamily: "var(--af-font-sans)",
   fontSize: 13,
   overflowY: "auto",
 };

@@ -1,13 +1,14 @@
+import { Bot, GitBranch, LogIn, LogOut, Repeat, Wrench, type LucideIcon } from "lucide-react";
 import type { DragEvent } from "react";
 import type { NodeType } from "../lib/graph";
 
-const PALETTE_ITEMS: { type: NodeType; label: string }[] = [
-  { type: "input", label: "Input" },
-  { type: "llm", label: "LLM" },
-  { type: "tool", label: "Tool" },
-  { type: "condition", label: "Condition" },
-  { type: "loop", label: "Loop" },
-  { type: "output", label: "Output" },
+const PALETTE_ITEMS: { type: NodeType; label: string; icon: LucideIcon; accent: string }[] = [
+  { type: "input", label: "Input", icon: LogIn, accent: "var(--af-node-input)" },
+  { type: "llm", label: "LLM", icon: Bot, accent: "var(--af-node-llm)" },
+  { type: "tool", label: "Tool", icon: Wrench, accent: "var(--af-node-tool)" },
+  { type: "condition", label: "Condition", icon: GitBranch, accent: "var(--af-node-condition)" },
+  { type: "loop", label: "Loop", icon: Repeat, accent: "var(--af-node-loop)" },
+  { type: "output", label: "Output", icon: LogOut, accent: "var(--af-node-output)" },
 ];
 
 export const NODE_DRAG_MIME = "application/agentforge-node-type";
@@ -21,32 +22,58 @@ export function Palette() {
   return (
     <div
       style={{
-        width: 140,
+        width: 168,
         padding: 12,
-        borderRight: "1px solid #1e293b",
-        background: "#0f172a",
-        color: "#e2e8f0",
-        fontFamily: "system-ui, sans-serif",
+        borderRight: "1px solid var(--af-border)",
+        background: "var(--af-bg-surface)",
+        color: "var(--af-text)",
+        fontFamily: "var(--af-font-sans)",
       }}
     >
-      <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 8, textTransform: "uppercase" }}>
-        Node Palette
+      <div
+        style={{
+          color: "var(--af-text-muted)",
+          fontSize: 11,
+          marginBottom: 8,
+          fontWeight: 600,
+        }}
+      >
+        Node palette
       </div>
-      {PALETTE_ITEMS.map(({ type, label }) => (
+      {PALETTE_ITEMS.map(({ type, label, icon: Icon, accent }) => (
         <div
           key={type}
           draggable
           onDragStart={(e) => onDragStart(e, type)}
+          className="af-palette-item"
           style={{
-            padding: "8px 10px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "7px 10px",
             marginBottom: 6,
-            borderRadius: 6,
-            border: "1px solid #334155",
-            background: "#1e293b",
+            borderRadius: "var(--af-radius-md)",
+            border: "1px solid var(--af-border)",
+            background: "var(--af-bg-surface-raised)",
             fontSize: 12,
             cursor: "grab",
           }}
         >
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 18,
+              height: 18,
+              borderRadius: "var(--af-radius-sm)",
+              background: `${accent}26`,
+              color: accent,
+              flexShrink: 0,
+            }}
+          >
+            <Icon size={11} strokeWidth={2} />
+          </span>
           {label}
         </div>
       ))}

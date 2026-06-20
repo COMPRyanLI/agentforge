@@ -1,14 +1,15 @@
 import type { NodeProps } from "@xyflow/react";
+import { Wrench } from "lucide-react";
 import { NodeShell } from "./NodeShell";
 
 export function ToolNode({ data }: NodeProps) {
   const toolId = typeof data.tool_id === "string" ? data.tool_id : undefined;
   return (
     <NodeShell
-      color="#0891b2"
-      background="#083344"
+      icon={Wrench}
+      accent="var(--af-node-tool)"
       label="Tool"
-      subtitle={toolId ? `tool: ${toolId.slice(0, 8)}…` : "no tool selected"}
+      subtitle={toolId ? `${toolId.slice(0, 8)}…` : "No tool selected"}
     />
   );
 }

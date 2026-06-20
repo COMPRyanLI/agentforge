@@ -13,6 +13,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { History, Rocket, Save, User, Wrench } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { BrowserRouter, Link, Route, Routes, useLocation } from "react-router-dom";
 import { createAgent, createVersion, getCurrentVersion, publishAgent } from "./api/agents";
@@ -227,7 +228,15 @@ function Canvas() {
       : null;
 
   return (
-    <div style={{ width: "100%", height: "100%", background: "#0b1020", display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        background: "var(--af-bg-canvas)",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       {/* Top bar */}
       <div
         style={{
@@ -235,45 +244,67 @@ function Canvas() {
           alignItems: "center",
           gap: 8,
           padding: "8px 12px",
-          borderBottom: "1px solid #1e293b",
-          background: "#0f172a",
-          color: "#e2e8f0",
-          fontFamily: "system-ui, sans-serif",
+          borderBottom: "1px solid var(--af-border)",
+          background: "var(--af-bg-surface)",
+          color: "var(--af-text)",
+          fontFamily: "var(--af-font-sans)",
           fontSize: 12,
         }}
       >
         <input
-          placeholder="Agent name"
+          placeholder="Untitled agent"
           value={agentName}
           onChange={(e) => setAgentName(e.target.value)}
-          style={topInputStyle}
+          style={titleInputStyle}
+          aria-label="Agent name"
         />
-        <button onClick={handleCreateAgent} style={topButtonStyle} disabled={!token}>
-          Create Agent
-        </button>
-        <div style={{ color: "#64748b" }}>
-          {agentId ? `agent: ${agentId.slice(0, 8)}…` : "(no agent yet)"}
+        <span style={{ color: "var(--af-text-faint)", fontSize: 11 }}>
+          {agentId ? `${agentId.slice(0, 8)}…` : "Not created yet"}
+        </span>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+          {!agentId && (
+            <button onClick={handleCreateAgent} style={secondaryButtonStyle} disabled={!token}>
+              Create agent
+            </button>
+          )}
+          <button onClick={handleSave} style={secondaryButtonStyle} disabled={!agentId}>
+            <Save size={13} /> Save
+          </button>
+          <button onClick={() => setToolBuilderOpen(true)} style={secondaryButtonStyle} disabled={!token}>
+            <Wrench size={13} /> Tool
+          </button>
+          {agentId ? (
+            <Link to={`/agents/${agentId}/runs`} style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
+              <History size={13} /> Runs
+            </Link>
+          ) : (
+            <span style={{ ...secondaryButtonStyle, opacity: 0.5, cursor: "not-allowed" }}>
+              <History size={13} /> Runs
+            </span>
+          )}
+          <button
+            onClick={handlePublish}
+            style={primaryButtonStyle}
+            disabled={!agentId || dirty}
+          >
+            <Rocket size={13} /> Publish
+          </button>
         </div>
-        <button onClick={handleSave} style={topButtonStyle} disabled={!agentId}>
-          Save Graph
-        </button>
-        <button onClick={handlePublish} style={topButtonStyle} disabled={!agentId || dirty}>
-          Publish
-        </button>
-        <button onClick={() => setToolBuilderOpen(true)} style={topButtonStyle} disabled={!token}>
-          + HTTP Tool
-        </button>
-        {agentId ? (
-          <Link to={`/agents/${agentId}/runs`} style={{ ...topButtonStyle, textDecoration: "none" }}>
-            Runs
-          </Link>
-        ) : (
-          <span style={{ ...topButtonStyle, opacity: 0.5, cursor: "not-allowed" }}>Runs</span>
-        )}
-        {saveErrors.length > 0 && (
-          <div style={{ color: "#ef4444", fontSize: 11 }}>{saveErrors.join(" | ")}</div>
-        )}
       </div>
+      {saveErrors.length > 0 && (
+        <div
+          style={{
+            padding: "6px 12px",
+            background: "var(--af-bg-surface)",
+            borderBottom: "1px solid var(--af-border)",
+            color: "#f87171",
+            fontSize: 11,
+          }}
+        >
+          {saveErrors.join(" | ")}
+        </div>
+      )}
 
       {/* Body */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
@@ -290,7 +321,7 @@ function Canvas() {
             onPaneClick={() => setSelectedNodeId(null)}
             fitView
           >
-            <Background />
+            <Background color="var(--af-border)" />
             <Controls />
           </ReactFlow>
         </div>
@@ -309,28 +340,125 @@ function Canvas() {
   );
 }
 
-const topInputStyle = {
-  background: "#1e293b",
-  border: "1px solid #334155",
+const titleInputStyle: CSSProperties = {
+  background: "transparent",
+  border: "1px solid transparent",
   borderRadius: 4,
-  padding: "4px 8px",
-  color: "#e2e8f0",
-  fontSize: 12,
+  padding: "4px 6px",
+  color: "var(--af-text)",
+  fontSize: 14,
+  fontWeight: 600,
+  fontFamily: "var(--af-font-sans)",
+  minWidth: 160,
 };
 
-const topButtonStyle = {
-  background: "#3b82f6",
-  border: "none",
+const topInputStyle: CSSProperties = {
+  background: "var(--af-bg-surface-raised)",
+  border: "1px solid var(--af-border)",
+  borderRadius: 4,
+  padding: "4px 8px",
+  color: "var(--af-text)",
+  fontSize: 12,
+  fontFamily: "var(--af-font-sans)",
+};
+
+const secondaryButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  background: "var(--af-bg-surface-raised)",
+  border: "1px solid var(--af-border)",
   borderRadius: 4,
   padding: "5px 10px",
-  color: "#fff",
+  color: "var(--af-text)",
   fontSize: 12,
   cursor: "pointer",
 };
 
-function NavBar() {
+const primaryButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  background: "var(--af-accent)",
+  border: "none",
+  borderRadius: 4,
+  padding: "5px 12px",
+  color: "var(--af-accent-fg)",
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+function AccountMenu() {
   const { token, setToken } = useAuth();
-  const linkStyle: CSSProperties = { color: "#e2e8f0", textDecoration: "none", fontSize: 12 };
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as globalThis.Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  return (
+    <div ref={containerRef} style={{ position: "relative", marginLeft: "auto" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Account menu"
+        aria-expanded={open}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          border: "1px solid var(--af-border)",
+          background: token ? "var(--af-accent)" : "var(--af-bg-surface-raised)",
+          color: token ? "var(--af-accent-fg)" : "var(--af-text-muted)",
+          cursor: "pointer",
+        }}
+      >
+        <User size={14} />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 6px)",
+            width: 240,
+            padding: 12,
+            borderRadius: "var(--af-radius-md)",
+            border: "1px solid var(--af-border)",
+            background: "var(--af-bg-surface-raised)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            zIndex: 50,
+          }}
+        >
+          <div style={{ color: "var(--af-text-muted)", fontSize: 11, marginBottom: 6 }}>
+            API token
+          </div>
+          <input
+            type="password"
+            placeholder="JWT token"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            style={{ ...topInputStyle, width: "100%", boxSizing: "border-box" }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NavBar() {
+  const linkStyle: CSSProperties = { color: "var(--af-text)", textDecoration: "none", fontSize: 12 };
 
   return (
     <div
@@ -339,9 +467,9 @@ function NavBar() {
         alignItems: "center",
         gap: 16,
         padding: "8px 12px",
-        borderBottom: "1px solid #1e293b",
-        background: "#0b1020",
-        fontFamily: "system-ui, sans-serif",
+        borderBottom: "1px solid var(--af-border)",
+        background: "var(--af-bg-canvas)",
+        fontFamily: "var(--af-font-sans)",
       }}
     >
       <Link to="/" style={{ ...linkStyle, fontWeight: 700 }}>
@@ -356,13 +484,7 @@ function NavBar() {
       <Link to="/templates" style={linkStyle}>
         Templates
       </Link>
-      <input
-        type="password"
-        placeholder="JWT token"
-        value={token}
-        onChange={(e) => setToken(e.target.value)}
-        style={{ ...topInputStyle, marginLeft: "auto", width: 220 }}
-      />
+      <AccountMenu />
     </div>
   );
 }

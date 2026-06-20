@@ -1,3 +1,4 @@
+import { Terminal } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import type { RunEvent } from "../api/runs";
 import { getRun, startRun, streamRunEvents } from "../api/runs";
@@ -133,11 +134,11 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
   }, []);
 
   const statusColor: Record<string, string> = {
-    pending: "#f59e0b",
-    running: "#3b82f6",
-    succeeded: "#22c55e",
-    failed: "#ef4444",
-    interrupted: "#a855f7",
+    pending: "var(--af-state-warning)",
+    running: "var(--af-state-info)",
+    succeeded: "var(--af-state-success)",
+    failed: "var(--af-state-danger)",
+    interrupted: "var(--af-state-warning)",
   };
 
   return (
@@ -146,24 +147,30 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
         width: 380,
         height: "100%",
         flexShrink: 0,
-        background: "#0f172a",
-        borderLeft: "1px solid #1e293b",
+        background: "var(--af-bg-surface)",
+        borderLeft: "1px solid var(--af-border)",
         display: "flex",
         flexDirection: "column",
-        fontFamily: "monospace",
+        fontFamily: "var(--af-font-sans)",
         fontSize: 13,
-        color: "#e2e8f0",
+        color: "var(--af-text)",
       }}
     >
       {/* Header */}
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid #1e293b", fontWeight: 700 }}>
-        AgentForge Test Panel
+      <div
+        style={{
+          padding: "12px 16px",
+          borderBottom: "1px solid var(--af-border)",
+          fontWeight: 600,
+        }}
+      >
+        Test panel
         {runStatus && (
           <span
             style={{
               marginLeft: 8,
               fontSize: 11,
-              color: statusColor[runStatus] ?? "#94a3b8",
+              color: statusColor[runStatus] ?? "var(--af-text-muted)",
               textTransform: "uppercase",
             }}
           >
@@ -172,9 +179,11 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
         )}
       </div>
 
-      <div style={{ padding: "8px 12px", borderBottom: "1px solid #1e293b" }}>
+      <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--af-border)" }}>
         {disabledReason && (
-          <div style={{ color: "#f59e0b", fontSize: 11, marginBottom: 6 }}>{disabledReason}</div>
+          <div style={{ color: "var(--af-state-warning)", fontSize: 11, marginBottom: 6 }}>
+            {disabledReason}
+          </div>
         )}
         <textarea
           placeholder="Input message…"
@@ -183,11 +192,12 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
           rows={2}
           style={{
             width: "100%",
-            background: "#1e293b",
-            border: "1px solid #334155",
+            background: "var(--af-bg-surface-raised)",
+            border: "1px solid var(--af-border)",
             borderRadius: 4,
             padding: "4px 8px",
-            color: "#e2e8f0",
+            color: "var(--af-text)",
+            fontFamily: "var(--af-font-sans)",
             fontSize: 12,
             resize: "vertical",
             boxSizing: "border-box",
@@ -199,13 +209,13 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
             disabled={running || !agentId || !input || !token || Boolean(disabledReason)}
             style={{
               flex: 1,
-              background: running ? "#1e293b" : "#3b82f6",
+              background: running ? "var(--af-bg-surface-raised)" : "var(--af-accent)",
               border: "none",
               borderRadius: 4,
               padding: "6px 0",
-              color: "#fff",
+              color: running ? "var(--af-text-muted)" : "var(--af-accent-fg)",
               cursor: running ? "not-allowed" : "pointer",
-              fontWeight: 700,
+              fontWeight: 600,
             }}
           >
             {running ? "Running…" : "▶ Test"}
@@ -214,11 +224,11 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
             <button
               onClick={handleStop}
               style={{
-                background: "#ef4444",
-                border: "none",
+                background: "transparent",
+                border: "1px solid var(--af-border)",
                 borderRadius: 4,
                 padding: "6px 12px",
-                color: "#fff",
+                color: "var(--af-text)",
                 cursor: "pointer",
               }}
             >
@@ -228,18 +238,32 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
         </div>
       </div>
 
-      {/* Log stream */}
+      {/* Log stream — monospace, since entries embed raw JSON payload previews. */}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
         {logs.length === 0 && !output && !errorText && (
-          <div style={{ color: "#475569", fontSize: 12, paddingTop: 8 }}>
-            Logs will stream here when you click Test.
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              textAlign: "center",
+              color: "var(--af-text-faint)",
+              paddingTop: 40,
+              gap: 8,
+            }}
+          >
+            <Terminal size={20} strokeWidth={1.5} />
+            <div style={{ fontSize: 12 }}>Logs will stream here when you click Test.</div>
           </div>
         )}
         {logs.map((entry, i) => (
-          <div key={i} style={{ marginBottom: 4, lineHeight: 1.5 }}>
-            <span style={{ color: "#475569", fontSize: 11 }}>{entry.ts} </span>
+          <div
+            key={i}
+            style={{ marginBottom: 4, lineHeight: 1.5, fontFamily: "var(--af-font-mono)" }}
+          >
+            <span style={{ color: "var(--af-text-faint)", fontSize: 11 }}>{entry.ts} </span>
             <span>{entry.icon} </span>
-            <span style={{ color: "#94a3b8" }}>{entry.text}</span>
+            <span style={{ color: "var(--af-text-muted)" }}>{entry.text}</span>
           </div>
         ))}
         <div ref={logEndRef} />
@@ -252,20 +276,20 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
         <div
           style={{
             padding: "10px 12px",
-            borderTop: "1px solid #1e293b",
-            background: "#0b1520",
+            borderTop: "1px solid var(--af-border)",
+            background: "var(--af-bg-canvas)",
           }}
         >
           <div
             style={{
-              color: errorText ? "#ef4444" : "#22c55e",
-              fontWeight: 700,
+              color: errorText ? "var(--af-state-danger)" : "var(--af-state-success)",
+              fontWeight: 600,
               marginBottom: 4,
             }}
           >
             Result
           </div>
-          <div style={{ color: "#e2e8f0", whiteSpace: "pre-wrap", fontSize: 13 }}>
+          <div style={{ color: "var(--af-text)", whiteSpace: "pre-wrap", fontSize: 13 }}>
             {errorText ?? output}
           </div>
         </div>

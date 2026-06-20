@@ -1,0 +1,82 @@
+/* Design tokens for the builder canvas — dark scale, one accent, desaturated
+   per-node-type accents used only as small icon-chip colors, never as a
+   full saturated node fill/border. */
+:root {
+  /* Surfaces */
+  --af-bg-canvas: #0d1117;
+  --af-bg-surface: #1b2230;
+  --af-bg-surface-raised: #232b3d;
+  --af-border: #2a3342;
+  --af-border-strong: #3a4458;
+
+  /* Text */
+  --af-text: #e6e9ef;
+  --af-text-muted: #8b94a7;
+  --af-text-faint: #5b6478;
+
+  /* Accent */
+  --af-accent: #6366f1;
+  --af-accent-hover: #7779f3;
+  --af-accent-fg: #ffffff;
+
+  /* Per-node-type accents — desaturated, for icon chips only */
+  --af-node-input: #5fa884;
+  --af-node-llm: #8b8df0;
+  --af-node-tool: #5fb3c4;
+  --af-node-condition: #c9a35c;
+  --af-node-loop: #b083d6;
+  --af-node-output: #9aa3b5;
+
+  /* Semantic state colors — independent of any node-type accent, so a
+     branch indicator never silently changes if a node's icon color does. */
+  --af-state-true: #4ade80;
+  --af-state-false: #5b6478;
+  --af-state-success: #4ade80;
+  --af-state-danger: #f87171;
+  --af-state-warning: #fbbf24;
+  --af-state-info: #60a5fa;
+
+  /* Type */
+  --af-font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --af-font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+
+  --af-radius-sm: 4px;
+  --af-radius-md: 8px;
+  --af-radius-lg: 10px;
+}
+
+.af-palette-item {
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.af-palette-item:hover {
+  background: var(--af-bg-surface-raised);
+  border-color: var(--af-border-strong);
+}
+
+/* Our node "type" names happen to collide with React Flow's reserved
+   built-in type names (input/output) — without this, the library renders
+   its own default white card (background/border/fixed width) underneath
+   our NodeShell content for those two types only. Strip it back to an
+   unstyled wrapper so NodeShell is the only thing visibly drawn. */
+.react-flow__node-input,
+.react-flow__node-output {
+  width: auto;
+  padding: 0;
+  font-size: inherit;
+  text-align: left;
+  color: inherit;
+  border: none;
+  background-color: transparent;
+  box-shadow: none;
+}
+.react-flow__node-input.selectable:hover,
+.react-flow__node-output.selectable:hover {
+  box-shadow: none;
+}
+
+/* A single, clean selection ring for every custom node type — replaces
+   React Flow's default per-built-in-type box-shadow (which only applied
+   to the input/output/default/group classes and used a stark light color). */
+.react-flow__node.selectable.selected {
+  box-shadow: 0 0 0 1px var(--af-accent);
+}
