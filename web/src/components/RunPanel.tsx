@@ -1,19 +1,9 @@
 import { useCallback, useRef, useState } from "react";
 import type { RunEvent } from "../api/runs";
 import { getRun, startRun, streamRunEvents } from "../api/runs";
+import { eventIcon } from "../lib/runEventDisplay";
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "interrupted"]);
-
-const EVENT_ICONS: Record<string, string> = {
-  node_start: "▶",
-  node_end: "■",
-  llm_call: "🤖",
-  llm_result: "💬",
-  tool_call: "🔧",
-  tool_result: "✅",
-  error: "❌",
-  retry: "🔄",
-};
 
 interface LogEntry {
   id: number;
@@ -107,7 +97,7 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
         run_id,
         token,
         (ev: RunEvent) => {
-          const icon = EVENT_ICONS[ev.event_type] ?? "•";
+          const icon = eventIcon(ev.event_type);
           const payloadStr =
             Object.keys(ev.payload).length > 0
               ? ` — ${JSON.stringify(ev.payload).slice(0, 120)}`

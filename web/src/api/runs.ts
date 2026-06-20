@@ -52,6 +52,42 @@ export async function getRun(runId: string, token: string): Promise<RunRead> {
   return resp.json() as Promise<RunRead>;
 }
 
+export async function listAgentRuns(agentId: string, token: string): Promise<RunRead[]> {
+  const resp = await fetch(`${API_BASE}/agents/${agentId}/runs`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error(`listAgentRuns failed ${resp.status}`);
+  return resp.json() as Promise<RunRead[]>;
+}
+
+export async function getRunTimeline(runId: string, token: string): Promise<RunEvent[]> {
+  const resp = await fetch(`${API_BASE}/runs/${runId}/timeline`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error(`getRunTimeline failed ${resp.status}`);
+  return resp.json() as Promise<RunEvent[]>;
+}
+
+// Mirrors the backend's AgentRunStats schema exactly — null fields mean "no
+// data yet" and must never be coerced to 0 by callers.
+export interface AgentRunStats {
+  total_runs: number;
+  in_progress_count: number;
+  success_rate: number | null;
+  p95_latency_ms: number | null;
+  avg_prompt_tokens: number | null;
+  avg_completion_tokens: number | null;
+  avg_steps_per_run: number | null;
+}
+
+export async function getAgentRunStats(agentId: string, token: string): Promise<AgentRunStats> {
+  const resp = await fetch(`${API_BASE}/agents/${agentId}/runs/stats`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error(`getAgentRunStats failed ${resp.status}`);
+  return resp.json() as Promise<AgentRunStats>;
+}
+
 export function streamRunEvents(
   runId: string,
   token: string,

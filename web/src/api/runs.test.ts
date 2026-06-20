@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunEvent } from "./runs";
-import { streamRunEvents } from "./runs";
+import { getAgentRunStats, getRunTimeline, listAgentRuns, streamRunEvents } from "./runs";
 
 class FakeEventSource {
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -82,5 +82,62 @@ describe("streamRunEvents", () => {
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(onDone).toHaveBeenCalledWith("succeeded");
     expect(fakeES.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+function mockFetchOnce(body: unknown, ok = true, status = 200): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok,
+      status,
+      json: () => Promise.resolve(body),
+      text: () => Promise.resolve(JSON.stringify(body)),
+    })
+  );
+}
+
+describe("listAgentRuns", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the parsed run list", async () => {
+    mockFetchOnce([{ id: "r1", status: "succeeded" }]);
+    const runs = await listAgentRuns("agent1", "tok");
+    expect(runs).toEqual([{ id: "r1", status: "succeeded" }]);
+  });
+
+  it("throws on a non-ok response", async () => {
+    mockFetchOnce({}, false, 403);
+    await expect(listAgentRuns("agent1", "tok")).rejects.toThrow(/403/);
+  });
+});
+
+describe("getRunTimeline", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the parsed event list", async () => {
+    const events = [{ run_id: "r1", step_index: 0, node_id: "in", event_type: "node_start", payload: {}, ts: "t" }];
+    mockFetchOnce(events);
+    const result = await getRunTimeline("r1", "tok");
+    expect(result).toEqual(events);
+  });
+});
+
+describe("getAgentRunStats", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the parsed stats including null fields as-is", async () => {
+    const stats = {
+      total_runs: 0,
+      in_progress_count: 0,
+      success_rate: null,
+      p95_latency_ms: null,
+      avg_prompt_tokens: null,
+      avg_completion_tokens: null,
+      avg_steps_per_run: null,
+    };
+    mockFetchOnce(stats);
+    const result = await getAgentRunStats("agent1", "tok");
+    expect(result).toEqual(stats);
   });
 });

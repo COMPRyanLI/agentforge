@@ -33,6 +33,8 @@ import { OutputNode } from "./nodes/OutputNode";
 import { ToolNode } from "./nodes/ToolNode";
 import { MarketplaceDetail } from "./pages/MarketplaceDetail";
 import { MarketplaceList } from "./pages/MarketplaceList";
+import { RunHistory } from "./pages/RunHistory";
+import { RunTimeline } from "./pages/RunTimeline";
 import { TemplateGallery } from "./pages/TemplateGallery";
 
 export interface OpenAgentState {
@@ -261,6 +263,13 @@ function Canvas() {
         <button onClick={() => setToolBuilderOpen(true)} style={topButtonStyle} disabled={!token}>
           + HTTP Tool
         </button>
+        {agentId ? (
+          <Link to={`/agents/${agentId}/runs`} style={{ ...topButtonStyle, textDecoration: "none" }}>
+            Runs
+          </Link>
+        ) : (
+          <span style={{ ...topButtonStyle, opacity: 0.5, cursor: "not-allowed" }}>Runs</span>
+        )}
         {saveErrors.length > 0 && (
           <div style={{ color: "#ef4444", fontSize: 11 }}>{saveErrors.join(" | ")}</div>
         )}
@@ -378,6 +387,8 @@ export default function App() {
               <Route path="/marketplace" element={<MarketplaceList />} />
               <Route path="/marketplace/:agentId" element={<MarketplaceDetail />} />
               <Route path="/templates" element={<TemplateGallery />} />
+              <Route path="/agents/:agentId/runs" element={<RunHistory />} />
+              <Route path="/runs/:runId/timeline" element={<RunTimeline />} />
             </Routes>
           </div>
         </div>
