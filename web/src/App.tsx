@@ -14,8 +14,16 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { History, Rocket, Save, Wrench } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
-import { BrowserRouter, Link, Route, Routes, useLocation } from "react-router-dom";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type ReactNode,
+} from "react";
+import { BrowserRouter, Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { createAgent, createVersion, getCurrentVersion, publishAgent } from "./api/agents";
 import { listTools, type ToolRead } from "./api/tools";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
@@ -331,7 +339,12 @@ function Canvas() {
           </ReactFlow>
         </div>
         <ConfigPanel node={configurableNode} tools={tools} onChange={handleConfigChange} />
-        <RunPanel token={token} agentId={agentId} disabledReason={disabledReason} />
+        <RunPanel
+          token={token}
+          agentId={agentId}
+          disabledReason={disabledReason}
+          onCreateAgent={handleCreateAgent}
+        />
       </div>
 
       {toolBuilderOpen && (
@@ -384,9 +397,36 @@ const primaryButtonStyle: CSSProperties = {
   cursor: "pointer",
 };
 
-function NavBar() {
-  const linkStyle: CSSProperties = { color: "var(--af-text)", textDecoration: "none", fontSize: 12 };
+function NavLinkItem({
+  to,
+  end = true,
+  children,
+}: {
+  to: string;
+  /** Set false for a section with sub-routes (e.g. /marketplace/:agentId)
+   * that should keep the parent nav item highlighted. */
+  end?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      style={({ isActive }) => ({
+        color: isActive ? "var(--af-text)" : "var(--af-text-muted)",
+        textDecoration: "none",
+        fontSize: 12,
+        fontWeight: isActive ? 600 : 400,
+        borderBottom: isActive ? "2px solid var(--af-accent)" : "2px solid transparent",
+        paddingBottom: 2,
+      })}
+    >
+      {children}
+    </NavLink>
+  );
+}
 
+function NavBar() {
   return (
     <div
       style={{
@@ -399,18 +439,14 @@ function NavBar() {
         fontFamily: "var(--af-font-sans)",
       }}
     >
-      <Link to="/" style={{ ...linkStyle, fontWeight: 700 }}>
+      <Link to="/" style={{ color: "var(--af-text)", textDecoration: "none", fontWeight: 700, fontSize: 12 }}>
         AgentForge
       </Link>
-      <Link to="/" style={linkStyle}>
-        Builder
-      </Link>
-      <Link to="/marketplace" style={linkStyle}>
+      <NavLinkItem to="/">Builder</NavLinkItem>
+      <NavLinkItem to="/marketplace" end={false}>
         Marketplace
-      </Link>
-      <Link to="/templates" style={linkStyle}>
-        Templates
-      </Link>
+      </NavLinkItem>
+      <NavLinkItem to="/templates">Templates</NavLinkItem>
       <AccountMenu />
     </div>
   );

@@ -18,9 +18,12 @@ interface RunPanelProps {
   agentId: string;
   /** Non-null reason disables Run — e.g. "Save the graph before testing." */
   disabledReason: string | null;
+  /** When set and there's no agent yet, the disabled-reason banner offers a
+   * one-click way to create one instead of just describing the blocker. */
+  onCreateAgent?: () => void;
 }
 
-export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
+export function RunPanel({ token, agentId, disabledReason, onCreateAgent }: RunPanelProps) {
   const [input, setInput] = useState("");
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [output, setOutput] = useState<string | null>(null);
@@ -183,6 +186,25 @@ export function RunPanel({ token, agentId, disabledReason }: RunPanelProps) {
         {disabledReason && (
           <div style={{ color: "var(--af-state-warning)", fontSize: 11, marginBottom: 6 }}>
             {disabledReason}
+            {!agentId && onCreateAgent && (
+              <>
+                {" "}
+                <button
+                  onClick={onCreateAgent}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--af-accent)",
+                    cursor: "pointer",
+                    fontSize: 11,
+                    padding: 0,
+                    textDecoration: "underline",
+                  }}
+                >
+                  Create one now
+                </button>
+              </>
+            )}
           </div>
         )}
         <textarea

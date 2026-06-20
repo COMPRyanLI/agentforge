@@ -130,6 +130,20 @@ describe("RunPanel completion handling", () => {
     expect(screen.getByRole("button", { name: /▶ test/i })).toBeInTheDocument();
   });
 
+  it("offers a Create one now action when there's no agent yet", () => {
+    const onCreateAgent = vi.fn();
+    render(
+      <RunPanel
+        token="tok"
+        agentId=""
+        disabledReason="Create an agent first."
+        onCreateAgent={onCreateAgent}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create one now/i }));
+    expect(onCreateAgent).toHaveBeenCalledTimes(1);
+  });
+
   it("still stops Running on a done event even if the GET /runs/{id} follow-up fails", async () => {
     getRun.mockRejectedValue(new Error("network error"));
 

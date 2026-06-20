@@ -13,6 +13,7 @@ import { colors, fontFamily, radius, space, typeScale } from "../components/ui/t
 const pageStyle = {
   padding: space.xl,
   color: colors.text,
+  background: "var(--af-bg-canvas)",
   fontFamily,
   height: "100%",
   overflow: "auto",

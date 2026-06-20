@@ -13,6 +13,7 @@ import { toTimelineItem } from "../lib/runEventDisplay";
 const pageStyle = {
   padding: space.xl,
   color: colors.text,
+  background: "var(--af-bg-canvas)",
   fontFamily,
   height: "100%",
   overflow: "auto",

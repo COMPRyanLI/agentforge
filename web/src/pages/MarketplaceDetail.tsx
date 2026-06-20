@@ -13,6 +13,7 @@ import { useAuth } from "../auth/AuthContext";
 const pageStyle = {
   padding: 24,
   color: "#e2e8f0",
+  background: "var(--af-bg-canvas)",
   fontFamily: "system-ui, sans-serif",
   height: "100%",
   overflow: "auto",
