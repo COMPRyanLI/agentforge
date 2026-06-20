@@ -1,4 +1,4 @@
-"""Auth router — register and login."""
+"""Auth router — register, login, and the current-user lookup."""
 
 from typing import Annotated
 
@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.schemas.user import LoginRequest, Token, UserCreate
+from app.dependencies import get_current_user
+from app.models.user import User
+from app.schemas.user import LoginRequest, Token, UserCreate, UserRead
 from app.services import auth as auth_service
 
 router = APIRouter(tags=["auth"])
@@ -31,3 +33,8 @@ async def login(
 ) -> Token:
     _, token = await auth_service.login(session, data, settings)
     return Token(access_token=token)
+
+
+@router.get("/me", response_model=UserRead)
+async def me(current_user: Annotated[User, Depends(get_current_user)]) -> UserRead:
+    return UserRead.model_validate(current_user)

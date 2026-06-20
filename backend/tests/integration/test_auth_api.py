@@ -50,3 +50,28 @@ async def test_login_wrong_password_returns_401(
         json={"email": "alice@example.com", "password": "wrongpassword"},
     )
     assert resp.status_code == 401
+
+
+async def test_me_returns_current_user(
+    client: AsyncClient, registered_user: dict[str, str]
+) -> None:
+    token = registered_user["access_token"]
+    resp = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["email"] == "alice@example.com"
+    assert "id" in data
+    assert "created_at" in data
+    assert "password" not in data
+
+
+async def test_me_without_token_returns_401(client: AsyncClient) -> None:
+    # No Authorization header at all — FastAPI's HTTPBearer security dependency
+    # rejects this before our own 401-on-bad-token logic ever runs.
+    resp = await client.get("/auth/me")
+    assert resp.status_code == 401
+
+
+async def test_me_with_invalid_token_returns_401(client: AsyncClient) -> None:
+    resp = await client.get("/auth/me", headers={"Authorization": "Bearer not-a-real-token"})
+    assert resp.status_code == 401

@@ -1,3 +1,5 @@
+import { authHeaders, checkOk } from "./client";
+
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 export type ToolImplType = "builtin" | "http" | "python";
@@ -24,18 +26,6 @@ export interface ToolCreate {
 export interface ToolTestResponse {
   result: Record<string, unknown> | null;
   error: string | null;
-}
-
-function authHeaders(token: string): Record<string, string> {
-  return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-}
-
-async function checkOk(resp: Response, label: string): Promise<Response> {
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`${label} failed ${resp.status}: ${body}`);
-  }
-  return resp;
 }
 
 export async function listTools(token: string): Promise<ToolRead[]> {

@@ -3,11 +3,12 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import * as marketplaceApi from "../api/marketplace";
 import { AuthContext } from "../auth/AuthContext";
+import { mockAuthValue } from "../auth/testAuth";
 import { MarketplaceList } from "./MarketplaceList";
 
 function renderWithToken(token: string) {
   return render(
-    <AuthContext.Provider value={{ token, setToken: vi.fn() }}>
+    <AuthContext.Provider value={mockAuthValue(token)}>
       <MemoryRouter>
         <MarketplaceList />
       </MemoryRouter>

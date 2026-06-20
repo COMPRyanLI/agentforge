@@ -3,11 +3,12 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import * as templatesApi from "../api/templates";
 import { AuthContext } from "../auth/AuthContext";
+import { mockAuthValue } from "../auth/testAuth";
 import { TemplateGallery } from "./TemplateGallery";
 
 function renderWithToken(token: string) {
   return render(
-    <AuthContext.Provider value={{ token, setToken: vi.fn() }}>
+    <AuthContext.Provider value={mockAuthValue(token)}>
       <MemoryRouter>
         <TemplateGallery />
       </MemoryRouter>

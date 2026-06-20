@@ -13,12 +13,14 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { History, Rocket, Save, User, Wrench } from "lucide-react";
+import { History, Rocket, Save, Wrench } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { BrowserRouter, Link, Route, Routes, useLocation } from "react-router-dom";
 import { createAgent, createVersion, getCurrentVersion, publishAgent } from "./api/agents";
 import { listTools, type ToolRead } from "./api/tools";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { RequireAuth } from "./auth/RequireAuth";
+import { AccountMenu } from "./components/AccountMenu";
 import { ConfigPanel, type ConfigurableNode } from "./components/ConfigPanel";
 import { NODE_DRAG_MIME, Palette } from "./components/Palette";
 import { RunPanel } from "./components/RunPanel";
@@ -32,8 +34,10 @@ import { LLMNode } from "./nodes/LLMNode";
 import { LoopNode } from "./nodes/LoopNode";
 import { OutputNode } from "./nodes/OutputNode";
 import { ToolNode } from "./nodes/ToolNode";
+import { Login } from "./pages/Login";
 import { MarketplaceDetail } from "./pages/MarketplaceDetail";
 import { MarketplaceList } from "./pages/MarketplaceList";
+import { Register } from "./pages/Register";
 import { RunHistory } from "./pages/RunHistory";
 import { RunTimeline } from "./pages/RunTimeline";
 import { TemplateGallery } from "./pages/TemplateGallery";
@@ -352,16 +356,6 @@ const titleInputStyle: CSSProperties = {
   minWidth: 160,
 };
 
-const topInputStyle: CSSProperties = {
-  background: "var(--af-bg-surface-raised)",
-  border: "1px solid var(--af-border)",
-  borderRadius: 4,
-  padding: "4px 8px",
-  color: "var(--af-text)",
-  fontSize: 12,
-  fontFamily: "var(--af-font-sans)",
-};
-
 const secondaryButtonStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -388,74 +382,6 @@ const primaryButtonStyle: CSSProperties = {
   fontWeight: 600,
   cursor: "pointer",
 };
-
-function AccountMenu() {
-  const { token, setToken } = useAuth();
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as globalThis.Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, [open]);
-
-  return (
-    <div ref={containerRef} style={{ position: "relative", marginLeft: "auto" }}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-label="Account menu"
-        aria-expanded={open}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 28,
-          height: 28,
-          borderRadius: "50%",
-          border: "1px solid var(--af-border)",
-          background: token ? "var(--af-accent)" : "var(--af-bg-surface-raised)",
-          color: token ? "var(--af-accent-fg)" : "var(--af-text-muted)",
-          cursor: "pointer",
-        }}
-      >
-        <User size={14} />
-      </button>
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 6px)",
-            width: 240,
-            padding: 12,
-            borderRadius: "var(--af-radius-md)",
-            border: "1px solid var(--af-border)",
-            background: "var(--af-bg-surface-raised)",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-            zIndex: 50,
-          }}
-        >
-          <div style={{ color: "var(--af-text-muted)", fontSize: 11, marginBottom: 6 }}>
-            API token
-          </div>
-          <input
-            type="password"
-            placeholder="JWT token"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            style={{ ...topInputStyle, width: "100%", boxSizing: "border-box" }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
 
 function NavBar() {
   const linkStyle: CSSProperties = { color: "var(--af-text)", textDecoration: "none", fontSize: 12 };
@@ -505,12 +431,56 @@ export default function App() {
           <NavBar />
           <div style={{ flex: 1, overflow: "hidden" }}>
             <Routes>
-              <Route path="/" element={<BuilderPage />} />
-              <Route path="/marketplace" element={<MarketplaceList />} />
-              <Route path="/marketplace/:agentId" element={<MarketplaceDetail />} />
-              <Route path="/templates" element={<TemplateGallery />} />
-              <Route path="/agents/:agentId/runs" element={<RunHistory />} />
-              <Route path="/runs/:runId/timeline" element={<RunTimeline />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route
+                path="/"
+                element={
+                  <RequireAuth>
+                    <BuilderPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/marketplace"
+                element={
+                  <RequireAuth>
+                    <MarketplaceList />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/marketplace/:agentId"
+                element={
+                  <RequireAuth>
+                    <MarketplaceDetail />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/templates"
+                element={
+                  <RequireAuth>
+                    <TemplateGallery />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/agents/:agentId/runs"
+                element={
+                  <RequireAuth>
+                    <RunHistory />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/runs/:runId/timeline"
+                element={
+                  <RequireAuth>
+                    <RunTimeline />
+                  </RequireAuth>
+                }
+              />
             </Routes>
           </div>
         </div>

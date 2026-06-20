@@ -46,6 +46,12 @@ completed steps. This only works if runtime code (`backend/app/runtime/`) is det
 3. **Versioned graphs** — a run always executes against the immutable `agent_versions` row it
    started on, never a published version that's since changed.
 
+The web app stores the JWT in `localStorage` for simplicity — a deliberate tradeoff for this
+project's scope. The production-hardened version would use httpOnly cookies plus short-lived
+access tokens with a refresh-token rotation, trading some implementation complexity for
+immunity to XSS-based token theft (a `localStorage` token is readable by any script running
+on the page).
+
 ### Resume from crash (the headline demo)
 
 ```bash

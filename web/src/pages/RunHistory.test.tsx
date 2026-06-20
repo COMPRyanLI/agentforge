@@ -3,13 +3,14 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as runsApi from "../api/runs";
 import { AuthContext } from "../auth/AuthContext";
+import { mockAuthValue } from "../auth/testAuth";
 import { RunHistory } from "./RunHistory";
 
 afterEach(cleanup);
 
 function renderAt(agentId: string, token = "test-token") {
   return render(
-    <AuthContext.Provider value={{ token, setToken: vi.fn() }}>
+    <AuthContext.Provider value={mockAuthValue(token)}>
       <MemoryRouter initialEntries={[`/agents/${agentId}/runs`]}>
         <Routes>
           <Route path="/agents/:agentId/runs" element={<RunHistory />} />

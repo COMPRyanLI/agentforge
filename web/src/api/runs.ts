@@ -1,3 +1,5 @@
+import { authHeaders, checkOk } from "./client";
+
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 export interface RunEnqueueResponse {
@@ -31,16 +33,10 @@ export async function startRun(
 ): Promise<RunEnqueueResponse> {
   const resp = await fetch(`${API_BASE}/agents/${agentId}/run`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
+    headers: authHeaders(token),
     body: JSON.stringify({ input }),
   });
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`startRun failed ${resp.status}: ${body}`);
-  }
+  await checkOk(resp, "startRun");
   return resp.json() as Promise<RunEnqueueResponse>;
 }
 
@@ -48,7 +44,7 @@ export async function getRun(runId: string, token: string): Promise<RunRead> {
   const resp = await fetch(`${API_BASE}/runs/${runId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!resp.ok) throw new Error(`getRun failed ${resp.status}`);
+  await checkOk(resp, "getRun");
   return resp.json() as Promise<RunRead>;
 }
 
@@ -56,7 +52,7 @@ export async function listAgentRuns(agentId: string, token: string): Promise<Run
   const resp = await fetch(`${API_BASE}/agents/${agentId}/runs`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!resp.ok) throw new Error(`listAgentRuns failed ${resp.status}`);
+  await checkOk(resp, "listAgentRuns");
   return resp.json() as Promise<RunRead[]>;
 }
 
@@ -64,7 +60,7 @@ export async function getRunTimeline(runId: string, token: string): Promise<RunE
   const resp = await fetch(`${API_BASE}/runs/${runId}/timeline`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!resp.ok) throw new Error(`getRunTimeline failed ${resp.status}`);
+  await checkOk(resp, "getRunTimeline");
   return resp.json() as Promise<RunEvent[]>;
 }
 
@@ -84,7 +80,7 @@ export async function getAgentRunStats(agentId: string, token: string): Promise<
   const resp = await fetch(`${API_BASE}/agents/${agentId}/runs/stats`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!resp.ok) throw new Error(`getAgentRunStats failed ${resp.status}`);
+  await checkOk(resp, "getAgentRunStats");
   return resp.json() as Promise<AgentRunStats>;
 }
 
